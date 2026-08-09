@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>无限像素画布</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #e8eaed;
+    font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  #canvas {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    display: block;
+    touch-action: none;
+    cursor: crosshair;
+    outline: none;
+  }
+  #canvas.panning { cursor: grabbing; }
+  #canvas.space { cursor: grab; }
+
+  #toolbar {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 10;
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: center;
+    background: rgba(28, 30, 36, .93);
+    color: #e8eaf0;
+    padding: 8px 14px;
+    border-radius: 12px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.28);
+    font-size: 13px;
+    max-width: 97vw;
+    backdrop-filter: blur(6px);
+    user-select: none;
+  }
+  #toolbar .logo { font-weight: 700; font-size: 14px; color: #fff; padding: 5px 8px; border-radius: 7px; }
+  #toolbar .sep { width: 1px; height: 22px; background: rgba(255,255,255,.18); }
+  .tool-btn, .btn {
+    padding: 5px 10px; border-radius: 7px;
+    cursor: pointer; color: #cfd3dc;
+    border: 1px solid transparent;
+    background: transparent;
+    font-size: 13px;
+    transition: background .15s, color .15s;
+  }
+  .tool-btn:hover, .btn:hover { background: rgba(255,255,255,.10); color: #fff; }
+  .tool-btn.active { background: #3b82f6; color: #fff; }
+  .btn.primary { background: #3b82f6; color: #fff; }
+  .btn.primary:hover { background: #2f6fe0; }
+  .btn.danger { background: rgba(239,68,68,.85); color: #fff; }
+  .btn.danger:hover { background: #d92d2d; }
+  select {
+    background: rgba(255,255,255,.10); color: #e8eaf0;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 7px;
+    padding: 4px 6px; font-size: 13px; outline: none;
+  }
+  select option { background: #2b2d33; color: #e8eaf0; }
+  select optgroup { background: #2b2d33; color: #e8eaf0; }
+  #colorPicker {
+    width: 34px; height: 28px; padding: 0; border: 2px solid rgba(255,255,255,.35);
+    border-radius: 6px; background: none; cursor: pointer;
+  }
+  #colorPicker::-webkit-color-swatch-wrapper { padding: 1px; }
+  #colorPicker::-webkit-color-swatch { border: none; border-radius: 4px; }
+  .field { display: inline-flex; align-items: center; gap: 6px; color: #cfd3dc; white-space: nowrap; }
+  .field input[type=range] { width: 100px; accent-color: #3b82f6; }
+  #zoomVal { color: #9aa0ab; font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
+
+  #colorInfo {
+    position: fixed; z-index: 20;
+    display: none;
+    background: rgba(20,22,28,.92); color: #fff;
+    padding: 5px 9px; border-radius: 7px;
+    font-size: 12px; font-family: ui-monospace, Consolas, monospace;
+    line-height: 1.5; pointer-events: none;
+    box-shadow: 0 2px 10px rgba(0,0,0,.3);
+    white-space: nowrap;
+  }
+  #colorInfo .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; border: 1px solid rgba(255,255,255,.4); }
+
+  #hint {
+    position: fixed; left: 14px; bottom: 12px; z-index: 10;
+    color: rgba(40,44,52,.72);
+    background: rgba(255,255,255,.78);
+    padding: 6px 12px; border-radius: 8px;
+    font-size: 12px; line-height: 1.6;
+    box-shadow: 0 2px 8px rgba(0,0,0,.10);
+    backdrop-filter: blur(4px);
+    max-width: 430px;
+  }
+  #hint b { color: rgba(30,34,42,.95); }
+  @media (max-width: 820px) { #hint { display: none; } }
+
+  /* ---- 自定义笔刷画板 ---- */
+  #modalMask {
+    position: fixed; inset: 0; z-index: 30;
+    background: rgba(10,12,16,.55);
+    display: none;
+    align-items: center; justify-content: center;
+  }
+  #modalMask.open { display: flex; }
+  #modal {
+    background: #23252c; color: #e8eaf0;
+    border-radius: 14px; padding: 16px 18px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.45);
+    max-width: 94vw; max-height: 92vh; overflow: auto;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  #modalHead { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+  #modalTitle { font-size: 15px; font-weight: 700; }
+  #btnCloseModal { background: none; border: none; color: #9aa0ab; font-size: 20px; cursor: pointer; line-height: 1; }
+  #btnCloseModal:hover { color: #fff; }
+  #modalControls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  #modalCanvas {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.25);
+    touch-action: none;
+    cursor: crosshair;
+    display: block;
+    margin: 0 auto;
+  }
+  #modalMain { display: flex; gap: 10px; align-items: flex-start; justify-content: center; }
+  #modalSideTools {
+    display: flex; flex-direction: column; gap: 5px; align-items: center;
+    background: rgba(255,255,255,.06);
+    padding: 6px 4px; border-radius: 10px;
+  }
+  #modalSideTools .tool-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; padding: 0; font-size: 17px; }
+  #modalFoot { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+  /* ---- 设置面板 ---- */
+  #settingsMask {
+    position: fixed; inset: 0; z-index: 25;
+    background: rgba(10,12,16,.5);
+    display: none;
+    align-items: center; justify-content: center;
+  }
+  #settingsMask.open { display: flex; }
+  #settingsPanel {
+    background: #23252c; color: #e8eaf0;
+    border-radius: 14px; padding: 16px 18px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.45);
+    width: min(500px, 92vw);
+    max-height: 88vh; overflow: auto;
+    display: flex; flex-direction: column; gap: 11px;
+  }
+  #settingsHead { display: flex; align-items: center; justify-content: space-between; }
+  #settingsTitle { font-size: 15px; font-weight: 700; }
+  #btnCloseSettings { background: none; border: none; color: #9aa0ab; font-size: 20px; cursor: pointer; line-height: 1; }
+  #btnCloseSettings:hover { color: #fff; }
+  .s-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .s-label { color: #9aa0ab; width: 52px; flex-shrink: 0; font-size: 13px; }
+  #settingsPanel .field input[type=range] { width: 90px; }
+  .s-note { color: #8a8f9a; font-size: 11px; width: 100%; }
+
+  /* ---- 恢复按钮（手动隐藏后显示） ---- */
+  #btnRestoreUI {
+    position: fixed; right: 16px; bottom: 16px; z-index: 15;
+    display: none;
+    padding: 9px 16px;
+    background: rgba(28,30,36,.92); color: #fff;
+    border: none; border-radius: 10px;
+    font-size: 13px; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0,0,0,.3);
+  }
+  #btnRestoreUI:hover { background: #3b82f6; }
+
+  /* ---- 右侧工具栏 ---- */
+  #sideToolbar {
+    position: fixed; right: 12px; top: 50%; transform: translateY(-50%);
+    z-index: 12;
+    display: flex; flex-direction: column; gap: 5px; align-items: center;
+    background: rgba(28,30,36,.92);
+    padding: 8px 6px;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.28);
+    user-select: none;
+  }
+  #sideToolbar .side-title { font-size: 10px; color: #9aa0ab; margin-bottom: 2px; }
+  #sideToolbar .tool-btn {
+    width: 38px; height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; font-size: 18px;
+  }
+
+  /* ---- 统计面板 ---- */
+  #statsPanel {
+    position: fixed; right: 64px; top: 90px; z-index: 13;
+    width: 320px; max-height: 72vh; overflow: auto;
+    background: rgba(28,30,36,.96); color: #e8eaf0;
+    border-radius: 12px; padding: 10px 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    display: none; font-size: 12px; line-height: 1.8;
+  }
+  #statsPanel.open { display: block; }
+  #statsPanelHead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 4px; }
+  #btnCloseStats { background: none; border: none; color: #9aa0ab; font-size: 16px; cursor: pointer; line-height: 1; }
+  #btnCloseStats:hover { color: #fff; }
+  .stat-row { display: flex; align-items: center; gap: 6px; }
+  .stat-swatch { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(255,255,255,.3); flex-shrink: 0; }
+  #statsFoot { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+  /* ---- 更多工具菜单 / 封闭图形子菜单 ---- */
+  #moreMenu, #shapeMenu, #selectMenu {
+    position: fixed; right: 60px; top: 50%; transform: translateY(-50%);
+    z-index: 13;
+    display: none; flex-direction: column; gap: 4px;
+    background: rgba(28,30,36,.96);
+    padding: 6px; border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    user-select: none;
+  }
+  #moreMenu.open, #shapeMenu.open, #selectMenu.open { display: flex; }
+  #moreMenu .tool-btn, #shapeMenu .tool-btn, #selectMenu .tool-btn {
+    display: flex; align-items: center; gap: 6px;
+    white-space: nowrap; padding: 7px 10px;
+  }
+
+  /* ---- 图层面板（屏幕左侧） ---- */
+  #layersToggle {
+    position: fixed; left: 12px; top: 50%; transform: translateY(-50%);
+    z-index: 12; width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(28,30,36,.92); color: #e8eaf0;
+    border: none; border-radius: 9px; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0,0,0,.28); font-size: 14px; user-select: none;
+    transition: background .15s, color .15s;
+  }
+  #layersToggle:hover, #layersToggle.active { background: #3b82f6; color: #fff; }
+  #layersPanel {
+    position: fixed; left: 50px; top: 50%; transform: translateY(-50%);
+    z-index: 12; width: 178px;
+    background: rgba(28,30,36,.95); color: #e8eaf0;
+    border-radius: 12px; padding: 8px 9px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.3); font-size: 12px;
+    display: none; user-select: none;
+  }
+  #layersPanel.open { display: block; }
+  #layersHead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 6px; gap: 6px; }
+  .layers-hint { color: #8a8f9a; font-size: 10px; font-weight: 400; }
+  #layersList { max-height: 45vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+  .layer-item {
+    display: flex; align-items: center; gap: 6px; padding: 5px 7px; border-radius: 7px;
+    cursor: pointer; color: #cfd3dc; background: rgba(255,255,255,.06);
+  }
+  .layer-item:hover { background: rgba(255,255,255,.12); }
+  .layer-item.active { background: #3b82f6; color: #fff; }
+  .layer-item .eye { cursor: pointer; font-size: 13px; flex-shrink: 0; }
+  .layer-item .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #layersFoot { display: flex; gap: 5px; margin-top: 8px; }
+  #layersFoot .btn { padding: 3px 6px; font-size: 11px; }
+  #nodeNameInput {
+    width: 100%; background: rgba(255,255,255,.10); color: #e8eaf0;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
+    padding: 4px 7px; font-size: 12px; outline: none; box-sizing: border-box;
+  }
+  #nodeNameInput:focus { border-color: #3b82f6; }
+  #nodeNameInput:disabled { opacity: .4; }
+  /* 图层项：添加节点按钮 / 图层名编辑输入框 */
+  .layer-item .objbtn {
+    cursor: pointer; font-size: 12px; padding: 0 3px; opacity: .45; border-radius: 4px; flex-shrink: 0;
+  }
+  .layer-item .objbtn:hover { opacity: 1; background: rgba(30,200,120,.25); }
+  .layer-item .objbtn.on { opacity: 1; background: rgba(30,200,120,.35); }
+  .layer-item .instbtn.on { opacity: 1; background: rgba(245,158,11,.38); }
+  .layer-item .renamebtn { cursor: pointer; font-size: 11px; padding: 0 3px; opacity: .5; border-radius: 4px; flex-shrink: 0; }
+  .layer-item .renamebtn:hover { opacity: 1; background: rgba(255,255,255,.18); }
+  .layer-name-input {
+    flex: 1; min-width: 40px; background: rgba(255,255,255,.14); color: #e8eaf0;
+    border: 1px solid #3b82f6; border-radius: 5px; padding: 1px 5px; font-size: 12px; outline: none;
+  }
+
+  /* ---- 噪声生成 / 数学方程 面板 ---- */
+  #noisePanel, #mathPanel {
+    position: fixed; right: 64px; top: 90px; z-index: 13;
+    width: 320px;
+    background: rgba(28,30,36,.96); color: #e8eaf0;
+    border-radius: 12px; padding: 10px 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    display: none; font-size: 12px; line-height: 1.8;
+  }
+  #noisePanel.open, #mathPanel.open { display: block; }
+  #noiseHead, #mathHead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 6px; }
+  #btnCloseNoise, #btnCloseMath { background: none; border: none; color: #9aa0ab; font-size: 16px; cursor: pointer; line-height: 1; }
+  #btnCloseNoise:hover, #btnCloseMath:hover { color: #fff; }
+  .n-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+  .n-label { color: #9aa0ab; width: 56px; flex-shrink: 0; font-size: 12px; }
+  #noisePanel input[type=number], #mathPanel input[type=number], #mathPanel input[type=text] {
+    background: rgba(255,255,255,.10); color: #e8eaf0;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 7px;
+    padding: 3px 6px; font-size: 12px; outline: none; width: 74px;
+  }
+  #noisePanel input[type=number]:focus, #mathPanel input:focus { border-color: #3b82f6; }
+  #noisePanel .field, #mathPanel .field { font-size: 12px; color: #cfd3dc; }
+  #noisePanel .btn, #mathPanel .btn { padding: 4px 10px; }
+  #noisePanel .n-note, #mathPanel .n-note { color: #9aa0ab; font-size: 11px; margin-top: 6px; }
+
+  /* ---- 节点编辑器面板 ---- */
+  #nodePanel {
+    position: fixed; right: 64px; top: 90px; z-index: 13;
+    width: 720px; max-width: 96vw;
+    background: rgba(28,30,36,.97); color: #e8eaf0;
+    border-radius: 12px; padding: 10px 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    display: none; font-size: 12px; line-height: 1.8;
+  }
+  #nodePanel.open { display: block; }
+  #nodeHead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 6px; }
+  #btnCloseNode { background: none; border: none; color: #9aa0ab; font-size: 16px; cursor: pointer; }
+  #btnCloseNode:hover { color: #fff; }
+  #nodeBody { display: flex; gap: 10px; min-height: 320px; }
+  #nodeLeft { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
+  .node-col-title { font-size: 11px; color: #9aa0ab; font-weight: 700; }
+  #nodeObjList { flex: 1; overflow: auto; max-height: 220px; display: flex; flex-direction: column; gap: 4px; }
+  .node-obj {
+    display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 7px;
+    cursor: pointer; color: #cfd3dc; background: rgba(255,255,255,.06); white-space: nowrap;
+  }
+  .node-obj:hover { background: rgba(255,255,255,.12); }
+  .node-obj.active { background: #3b82f6; color: #fff; }
+  .node-obj .tag { font-size: 10px; opacity: .8; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; flex-shrink: 0; }
+  #nodeLeftFoot { display: flex; gap: 6px; flex-wrap: wrap; }
+  #nodeLeftFoot .btn { padding: 4px 8px; font-size: 11px; }
+  #nodeRight { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  /* 实例列表 */
+  #nodeInstList { flex: 1; overflow: auto; max-height: 130px; display: flex; flex-direction: column; gap: 3px; }
+  .node-inst {
+    display: flex; align-items: center; gap: 6px; padding: 3px 7px; border-radius: 6px;
+    background: rgba(255,255,255,.06); cursor: pointer; font-size: 11px; white-space: nowrap;
+  }
+  .node-inst:hover { background: rgba(255,255,255,.12); }
+  .node-inst.active { background: #3b82f6; color: #fff; }
+  .node-inst .del { cursor: pointer; color: #f87171; margin-left: auto; padding: 0 3px; font-size: 12px; }
+  .node-inst .del:hover { color: #fff; }
+  /* 积木工作区（Scratch 式） */
+  #blockArea {
+    flex: 1; min-height: 300px; max-height: 340px; overflow: auto;
+    background: #e9e7e1; border: 1px solid rgba(0,0,0,.25); border-radius: 8px; padding: 8px;
+    position: relative;
+  }
+  .bk {
+    display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 7px;
+    margin: 4px 0; color: #fff; font-size: 12px; cursor: pointer; position: relative;
+    flex-wrap: wrap; box-shadow: 0 1px 2px rgba(0,0,0,.25); user-select: none;
+  }
+  .bk.sel { outline: 2px solid #2563eb; outline-offset: 1px; }
+  .bk.report { border: 2px dashed rgba(255,255,255,.55); }
+  .bk.dark { color: #333; }
+  .bk .bk-body { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .bk .bk-ops { display: flex; gap: 3px; margin-left: auto; opacity: .7; }
+  .bk .bk-ops span { cursor: pointer; padding: 0 3px; font-size: 12px; }
+  .bk .bk-ops span:hover { opacity: 1; }
+  .bk input[type=number], .bk input[type=text] {
+    width: 52px; background: rgba(255,255,255,.92); color: #222;
+    border: none; border-radius: 5px; padding: 1px 5px; font-size: 12px;
+  }
+  .bk select {
+    background: rgba(255,255,255,.92); color: #222;
+    border: none; border-radius: 5px; padding: 1px 4px; font-size: 12px; max-width: 110px;
+  }
+  .bk-children { margin: 4px 0 4px 20px; padding-left: 10px; border-left: 3px solid rgba(0,0,0,.18); }
+  .bk-empty { color: #8a8f9a; font-size: 11px; padding: 2px 4px; font-style: italic; }
+  #blockToolRow, #varRow, #nodeRunRow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  #blockCatSelect, #blockTypeSelect {
+    background: rgba(255,255,255,.10); color: #e8eaf0;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 3px 6px; font-size: 12px;
+  }
+  #varNameInput {
+    flex: 1; min-width: 80px; background: rgba(255,255,255,.10); color: #e8eaf0;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 3px 7px; font-size: 12px;
+  }
+  #nodeRunRow { justify-content: space-between; margin-top: 2px; }
+
+  /* ---- Scratch 式全屏编辑器 ---- */
+  #scratchOverlay {
+    position: fixed; inset: 0; z-index: 40; background: #23252c; color: #e8eaf0;
+    display: none; flex-direction: column;
+  }
+  #scratchOverlay.open { display: flex; }
+  #scratchHead {
+    display: flex; justify-content: space-between; align-items: center; padding: 8px 14px;
+    background: rgba(255,255,255,.06); font-weight: 700; flex-shrink: 0;
+  }
+  #scratchBody { flex: 1; display: flex; min-height: 0; }
+  #scratchCats {
+    width: 112px; flex-shrink: 0; padding: 8px 6px; display: flex; flex-direction: column; gap: 4px;
+    background: rgba(255,255,255,.04); overflow: auto;
+  }
+  #scratchCats .cat { padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 700; color: #fff; }
+  #scratchCats .cat.dark { color: #333; }
+  #scratchCats .cat.active { outline: 2px solid #fff; outline-offset: -2px; }
+  #scratchMain { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 8px; }
+  /* 节点库 + 打包/导入/导出 共用左侧窄列：节点库在上、工具在下方 */
+  #scratchLib {
+    width: 148px; flex-shrink: 0; display: flex; flex-direction: column;
+    padding: 8px 6px; background: rgba(255,255,255,.04); border-left: 1px solid rgba(255,255,255,.08);
+    overflow-y: auto; position: relative;
+  }
+  /* 右边缘拖拽调宽手柄 */
+  #scratchLib::after { content: ''; position: absolute; top: 0; right: -5px; width: 10px; height: 100%; cursor: col-resize; z-index: 5; }
+  #scratchLib::after:hover { background: rgba(59,130,246,.25); }
+  #scratchLib .scratch-col-title { margin: 0 0 4px; }
+  #scratchPalette { display: flex; flex-wrap: wrap; gap: 5px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,.12); min-height: 34px; }
+  #scratchPalette .pb { border: none; border-radius: 6px; color: #fff; font-size: 11px; padding: 4px 9px; cursor: pointer; }
+  #scratchPalette .pb.dark { color: #333; }
+  #scratchPalette .pb:hover { filter: brightness(1.15); }
+  /* 打包/导出/导入：节点库下方 */
+  #scratchGroupTools {
+    display: flex; flex-direction: column; gap: 4px; margin-top: 8px;
+    padding: 6px 4px; background: rgba(167,139,250,.08); border: 1px solid rgba(167,139,250,.25); border-radius: 6px;
+  }
+  #scratchGroupTools .btn { padding: 5px 8px; font-size: 12px; width: 100%; }
+  #scratchBlocks {
+    flex: 1; position: relative; overflow: auto; background: #e9e7e1; border-radius: 8px; margin-top: 8px; min-height: 200px;
+  }
+  .scratch-col-title { font-size: 11px; color: #9aa0ab; font-weight: 700; margin-bottom: 4px; }
+  #scratchRight { flex: 0 1 330px; min-width: 240px; max-width: 46vw; padding: 8px; display: flex; flex-direction: column; gap: 8px; background: rgba(255,255,255,.03); overflow: hidden; }
+  #stageBox { background: #fff; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 120px; }
+  #stageCanvas { display: block; }
+  #stageCtrl label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #cfd3dc; }
+  #stageCtrl input[type=range] { width: 120px; accent-color: #3b82f6; }
+  #instInfo { flex: 1; background: rgba(255,255,255,.06); border-radius: 8px; padding: 8px; font-size: 12px; line-height: 1.9; overflow: auto; min-height: 80px; }
+
+  /* ---- 积木拼接形状（上下凹凸） ---- */
+  .bk { margin: 7px 2px 9px; }
+  .bk::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -7px;
+    width: 16px; height: 14px; background: inherit; border-radius: 0 0 5px 5px; z-index: 1; }
+  .bk::before { content: ''; position: absolute; left: 50%; transform: translateX(-50%); top: -5px;
+    width: 16px; height: 9px; background: #e9e7e1; border-radius: 0 0 6px 6px; z-index: 2; }
+  .bk.bk-first::before { display: none; }          /* 脚本栈第一块无顶部凹口 */
+  .bk.report::before, .bk.report::after { display: none; } /* 报告块无凹凸 */
+  .bk.report { border-radius: 10px; }
+  /* 条件槽（白色填充，报告块可拖入吸附） */
+  .cond-slot { display: inline-flex; align-items: center; min-width: 56px; min-height: 20px; padding: 1px 7px;
+    background: #fff; border-radius: 12px; color: #9aa0ab; font-size: 11px; cursor: crosshair; }
+  .cond-slot.hover { outline: 2px solid #3b82f6; }
+  .cond-slot .bk { margin: 0; }
+  /* 拖动插入占位条 */
+  .bk-slot { border: 2px dashed #3b82f6; border-radius: 8px; height: 40px; margin: 7px 2px 9px;
+    background: rgba(59,130,246,.10); }
+  /* 拖动 ghost */
+  #dragGhost { position: fixed; pointer-events: none; z-index: 60; padding: 4px 12px; border-radius: 7px;
+    color: #fff; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,.4); opacity: .85; white-space: nowrap; }
+
+  /* ---- 节点图画布（Blender 几何节点式） ---- */
+  #nodeCanvas {
+    position: relative; flex: 1; min-height: 300px; max-height: 330px; overflow: hidden;
+    background: #1b1d23; border: 1px solid rgba(255,255,255,.14); border-radius: 8px;
+    background-image: radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px);
+    background-size: 18px 18px;
+  }
+  #scratchCanvas {
+    position: relative; flex: 1; min-height: 220px; overflow: hidden;
+    background: #1b1d23; border-radius: 8px; margin-top: 8px;
+    background-image: radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px);
+    background-size: 18px 18px;
+  }
+  /* 节点画布视口层：节点/连线都在其中，随缩放/平移变换 */
+  .graph-viewport { position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 1; }
+  .graph-viewport .node-gnode { z-index: 1; }
+  .graph-viewport svg.conn-layer { z-index: 2; }
+  .node-gnode {
+    position: absolute; min-width: 148px; max-width: 200px; background: #2a2d35;
+    border: 1px solid rgba(255,255,255,.18); border-radius: 8px; font-size: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.45); user-select: none; z-index: 1;
+  }
+  .node-gnode.sel { outline: 2px solid #3b82f6; }
+  /* 节点组引用节点：紫色描边 + 圆角底色，区分普通节点 */
+  .node-gnode.group { border-color: #a78bfa; background: #352b4d; box-shadow: 0 2px 10px rgba(167,139,250,.35); }
+  /* 框选矩形（节点画布，屏幕坐标） */
+  .graph-sel-box { position: absolute; border: 1px dashed #3b82f6; background: rgba(59,130,246,.12); z-index: 5; pointer-events: none; }
+  #groupEditRow { background: #2a2d35; border: 1px solid rgba(167,139,250,.4); border-radius: 6px; padding: 5px 8px; margin: 6px 0; }
+  .node-gnode .ng-head {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 3px 6px 3px 9px; background: rgba(59,130,246,.4);
+    border-radius: 7px 7px 0 0; font-weight: 700; cursor: move; white-space: nowrap;
+  }
+  .node-gnode .ng-del { cursor: pointer; color: #f87171; padding: 0 3px; font-size: 13px; }
+  .node-gnode .ng-del:hover { color: #fff; }
+  .node-gnode .ng-row { display: flex; align-items: center; gap: 5px; padding: 2px 9px; }
+  .node-gnode .ng-row label { color: #9aa0ab; font-size: 11px; white-space: nowrap; }
+  .node-gnode .ng-row input[type=number] {
+    width: 52px; background: rgba(255,255,255,.10); color: #e8eaf0;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 5px; padding: 1px 4px; font-size: 11px;
+  }
+  .node-gnode .ng-row select {
+    width: 96px; background: rgba(255,255,255,.10); color: #e8eaf0;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 5px; padding: 1px 3px; font-size: 11px;
+  }
+  .node-socket { display: flex; align-items: center; gap: 5px; padding: 2px 7px; cursor: crosshair; }
+  .node-socket.in { justify-content: flex-start; }
+  .node-socket.out { justify-content: flex-end; }
+  .node-socket .dot {
+    width: 11px; height: 11px; border-radius: 50%; border: 2px solid #e8eaf0;
+    background: #3b82f6; flex-shrink: 0; box-sizing: border-box;
+  }
+  .node-socket.out .dot { background: #f59e0b; }
+  .node-socket .sl { color: #cfd3dc; font-size: 11px; }
+  /* 执行流连接点（Scratch 式：绿块。in=左侧入口◀，out=右侧出口▶，拖出口连到下一节点入口） */
+  .node-flow {
+    display: flex; align-items: center; justify-content: center; cursor: crosshair; flex-shrink: 0;
+    box-sizing: border-box; color: #fff; font-size: 9px; line-height: 1; font-weight: 700;
+  }
+  .node-flow.in {
+    width: 24px; height: 17px; background: #22c55e; border-radius: 9px 3px 3px 9px;
+    margin: 0 6px 0 2px; box-shadow: inset 2px 0 0 rgba(0,0,0,.25);
+  }
+  .node-flow.in::after { content: '◀'; }
+  .node-flow.out {
+    width: 24px; height: 17px; background: #22c55e; border-radius: 3px 9px 9px 3px;
+    margin: 0 2px 0 6px; box-shadow: inset -2px 0 0 rgba(0,0,0,.25);
+  }
+  .node-flow.out::after { content: '▶'; }
+  .node-flow:hover { filter: brightness(1.25); }
+  #nodeCanvas svg.conn-layer path.conn.flow, #scratchCanvas svg.conn-layer path.conn.flow {
+    stroke: #22c55e; stroke-width: 3; fill: none; pointer-events: stroke; cursor: pointer;
+  }
+  #nodeCanvas svg.conn-layer path.conn.flow:hover, #scratchCanvas svg.conn-layer path.conn.flow:hover { stroke: #a3e635; }
+  #nodeCanvas svg.conn-layer, #scratchCanvas svg.conn-layer { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 2; overflow: visible; }
+  #nodeCanvas svg.conn-layer path.conn, #scratchCanvas svg.conn-layer path.conn {
+    stroke: #7aa2ff; stroke-width: 2; fill: none; pointer-events: stroke; cursor: pointer;
+  }
+  #nodeCanvas svg.conn-layer path.conn:hover, #scratchCanvas svg.conn-layer path.conn:hover { stroke: #ffd166; }
+  #nodeCanvas svg.conn-layer path.temp, #scratchCanvas svg.conn-layer path.temp {
+    stroke: #7aa2ff; stroke-width: 1.5; stroke-dasharray: 4 3;
+  }
+  #nodeAddRow, #nodeRunRow, #varRow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  #varRow input[type=text] {
+    flex: 1; min-width: 90px; background: rgba(255,255,255,.10); color: #e8eaf0;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 3px 7px; font-size: 12px;
+  }
+  #scratchObjSel {
+    width: 100%; background: rgba(255,255,255,.10); color: #e8eaf0;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 4px 6px; font-size: 12px;
+  }
+  #scratchInstList { display: flex; flex-direction: column; gap: 4px; max-height: 110px; overflow: auto; }
+  #nodeCatSelect, #nodeTypeSelect {    background: rgba(255,255,255,.10); color: #e8eaf0;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 3px 6px; font-size: 12px;
+  }
+
+  /* ---- 按钮禁用态（撤销/重做） ---- */
+  .tool-btn.disabled { opacity: .35; pointer-events: none; }
+
+  /* ---- 导入进度提示 ---- */
+  #importStatus {
+    position: fixed; top: 64px; left: 50%; transform: translateX(-50%);
+    z-index: 14;
+    display: none;
+    background: rgba(20,22,28,.92); color: #fff;
+    padding: 7px 16px; border-radius: 8px;
+    font-size: 12px; white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(0,0,0,.3);
+  }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <span class="logo">⬚ 像素画布</span>
+  <div class="sep"></div>
+  <button class="tool-btn" id="btnSettings" title="打开设置：工具、笔刷/橡皮、颜色、颜色代码、隐藏界面等">⚙ 设置</button>
+  <button class="tool-btn" id="btnHideUI" title="手动隐藏/显示工具栏与提示（快捷键 H）">🙈 隐藏</button>
+  <div class="sep"></div>
+  <span class="tool-btn active" id="btnBrush" title="画笔工具（快捷键 B）">🖌 画笔</span>
+  <span class="tool-btn" id="btnEraser" title="橡皮工具（快捷键 E）">🧹 橡皮</span>
+  <span class="tool-btn" id="btnUndo" title="撤销（Ctrl+Z）">↶</span>
+  <span class="tool-btn" id="btnRedo" title="重做（Ctrl+Shift+Z / Ctrl+Y）">↷</span>
+  <div class="sep"></div>
+  <label class="field" id="sizeField">大小
+    <input type="range" id="sizeSlider" min="1" max="32" step="1" value="4">
+    <span id="sizeVal">4</span>px
+  </label>
+  <div class="sep"></div>
+  <input type="color" id="colorPicker" value="#3b82f6" title="当前画笔颜色">
+  <div class="sep"></div>
+  <span id="zoomVal" title="当前缩放">800%</span>
+  <button class="btn" id="btnReset" title="缩放回到 100%，原点回到屏幕中心">重置视图</button>
+  <div class="sep"></div>
+  <button class="btn" id="btnImportImage" title="把图片按像素导入到画布">🖼 导入图片</button>
+  <button class="btn primary" id="btnExportPng" title="导出透明背景 PNG">⬇ 导出图片</button>
+  <button class="btn" id="btnExportJson" title="保存工程（JSON）">导出工程</button>
+  <button class="btn" id="btnImportJson" title="导入工程（JSON）">导入工程</button>
+  <button class="btn danger" id="btnClear">清空</button>
+</div>
+
+<button id="btnRestoreUI" title="恢复工具栏与提示">👁 显示</button>
+
+<!-- 右侧工具栏：封闭图形 / 填充 / 直线 / 统计 / 更多 -->
+<div id="sideToolbar">
+  <div class="side-title">工具</div>
+  <span class="tool-btn" id="rToolShape" title="封闭图形：矩形 / 圆形 / 三角形（点击展开选择）">▭</span>
+  <span class="tool-btn" id="rToolFill" title="封闭填充：点击填充连通区域">🪣</span>
+  <span class="tool-btn" id="rToolLine" title="直线工具：拖动绘制直线">╱</span>
+  <span class="tool-btn" id="rToolMove" title="移动工具：拖动画布上的实例到新位置">✋</span>
+  <span class="tool-btn" id="rToolSelect" title="框选：图像统计 / 框选移动（点击展开选择）">▢</span>
+  <div class="side-title">更多</div>
+  <span class="tool-btn" id="rToolMore" title="更多工具">⋯</span>
+</div>
+
+<!-- 框选子菜单（图像统计 / 框选移动） -->
+<div id="selectMenu">
+  <span class="tool-btn" data-sel="stats" title="图像统计：拖动框选 / Shift+拖动 统计直线">📊 图像统计</span>
+  <span class="tool-btn" data-sel="moveSel" title="框选移动：拖动框选一片像素，之后用手掌工具(✋)拖动整片像素移动">📦 框选移动</span>
+</div>
+
+<!-- 封闭图形子菜单（矩形 / 圆形 / 三角形） -->
+<div id="shapeMenu">
+  <span class="tool-btn" data-shape="rect" title="矩形工具：拖动绘制矩形">▭ 矩形</span>
+  <span class="tool-btn" data-shape="circle" title="圆形工具：拖动绘制圆/椭圆">◯ 圆形</span>
+  <span class="tool-btn" data-shape="triangle" title="三角形工具：拖动绘制三角形">△ 三角形</span>
+</div>
+
+<!-- 更多工具展开菜单 -->
+<div id="moreMenu">
+  <span class="tool-btn" id="btnOpenPicker" title="拾色器：点击格子拾取颜色（矢量模式可拾取矢量对象颜色）">🎯 拾色器</span>
+  <span class="tool-btn" id="btnOpenNoise" title="生成 Perlin / Simplex / Value / Worley / Ridge 噪声图">🌊 噪声生成器</span>
+  <span class="tool-btn" id="btnOpenMath" title="按数学方程绘制图像，线条粗细随画笔大小">∑ 数学方程</span>
+  <span class="tool-btn" id="btnOpenNodeEditor" title="打开节点编辑器：对象列表、重命名、实例化、编辑节点图（同时启用「框选添加对象」：框选一片像素区域剪切为对象）">🧩 节点编辑器</span>
+</div>
+
+<!-- 图层面板（屏幕左侧）：添加 / 复制 / 删除 / 隐藏图层 -->
+<div id="layersToggle" title="显示/隐藏图层面板">▤</div>
+<div id="layersPanel">
+  <div id="layersHead"><span>▤ 图层</span><span class="layers-hint">点击名称切换活动图层</span></div>
+  <div id="layersList"></div>
+  <div id="layersFoot">
+    <button class="btn" id="btnLayerAdd" title="添加新图层">➕ 新建</button>
+    <button class="btn" id="btnLayerDup" title="复制当前图层">⧉ 复制</button>
+    <button class="btn danger" id="btnLayerDel" title="删除当前图层">🗑 删除</button>
+  </div>
+</div>
+
+<!-- 噪声生成面板 -->
+<div id="noisePanel">
+  <div id="noiseHead"><span>🌊 噪声生成器</span><button id="btnCloseNoise" title="关闭">×</button></div>
+  <div class="n-row">
+    <span class="n-label">噪声类型</span>
+    <select id="noiseType">
+      <option value="perlin" selected>Perlin 噪声</option>
+      <option value="simplex">Simplex 噪声</option>
+      <option value="value">Value 噪声</option>
+      <option value="worley">Worley 细胞噪声</option>
+      <option value="ridge">Ridge 山脊噪声</option>
+    </select>
+  </div>
+  <div class="n-row">
+    <span class="n-label">大小</span>
+    <label class="field">宽 <input type="number" id="noiseW" min="1" max="4096" step="1" value="128"></label>
+    <label class="field">高 <input type="number" id="noiseH" min="1" max="4096" step="1" value="128"></label>
+  </div>
+  <div class="n-row">
+    <span class="n-label">偏移量</span>
+    <label class="field">X <input type="number" id="noiseOffX" value="0"></label>
+    <label class="field">Y <input type="number" id="noiseOffY" value="0"></label>
+  </div>
+  <div class="n-row">
+    <span class="n-label">缩放</span>
+    <label class="field"><input type="number" id="noiseScale" min="0.01" step="0.1" value="10"></label>
+    <span class="n-note">越大图案越平缓</span>
+  </div>
+  <div class="n-row">
+    <span class="n-label">种子</span>
+    <label class="field"><input type="number" id="noiseSeed" step="1"></label>
+    <button class="btn" id="btnRandomSeed" title="随机种子">🎲</button>
+    <span class="n-note">相同种子=相同图案</span>
+  </div>
+  <div class="n-row">
+    <span class="n-label">倍频</span>
+    <label class="field"><input type="number" id="noiseOctaves" min="1" max="8" step="1" value="1"></label>
+    <span class="n-note">叠加层数，越多细节越丰富</span>
+  </div>
+  <div class="n-row">
+    <span class="n-label">颜色</span>
+    <select id="noiseMode">
+      <option value="gray" selected>灰度</option>
+      <option value="bw">黑白二值</option>
+      <option value="color">彩色渐变</option>
+    </select>
+    <label class="field" id="noiseThField" style="display:none">阈值
+      <input type="number" id="noiseThreshold" min="0" max="1" step="0.05" value="0.5">
+    </label>
+  </div>
+  <div class="n-row" style="justify-content:flex-end; margin-top:8px;">
+    <button class="btn primary" id="btnGenNoise">⚡ 生成噪声图</button>
+  </div>
+  <div class="n-note">生成位置：屏幕中心 · 支持撤销（Ctrl+Z）</div>
+</div>
+
+<!-- 数学方程图像面板 -->
+<div id="mathPanel">
+  <div id="mathHead"><span>∑ 数学方程图像</span><button id="btnCloseMath" title="关闭">×</button></div>
+  <div class="n-row">
+    <span class="n-label">方程</span>
+    <input type="text" id="mathExpr" placeholder="y=x^2 或 x^2+y^2=16" spellcheck="false" style="width:100%; box-sizing:border-box;">
+  </div>
+  <div class="n-row">
+    <span class="n-label">X 范围</span>
+    <label class="field">min <input type="number" id="mathXMin" step="0.5" value="-10"></label>
+    <label class="field">max <input type="number" id="mathXMax" step="0.5" value="10"></label>
+  </div>
+  <div class="n-row">
+    <span class="n-label">Y 范围</span>
+    <label class="field">min <input type="number" id="mathYMin" step="0.5" value="-10"></label>
+    <label class="field">max <input type="number" id="mathYMax" step="0.5" value="10"></label>
+  </div>
+  <div class="n-row">
+    <span class="n-label">显示大小</span>
+    <label class="field"><input type="number" id="mathScale" min="1" max="64" step="1" value="8"></label>
+    <span class="n-note">每 1 数学单位 = N 像素，越大图像越大</span>
+  </div>
+  <div class="n-row">
+    <span class="n-label">步长</span>
+    <label class="field"><input type="number" id="mathStep" min="0.5" step="0.5" value="1"></label>
+    <span class="n-note">采样步长（像素），越小越精细</span>
+  </div>
+  <div class="n-row">
+    <span class="n-label">粗细</span>
+    <span class="n-note">线条粗细 = 笔刷大小（用主工具栏大小滑块调整，1~32px；圆/椭圆等隐式方程同样由笔刷控制）</span>
+  </div>
+  <div class="n-row">
+    <span class="n-label">数轴</span>
+    <button class="tool-btn" id="mathAxisLabels" title="在坐标轴上显示刻度数字，数字间隔随缩放自动调整">🔢 数轴刻度数字</button>
+    <span class="n-note">默认关闭 · 刻度标注在坐标轴上</span>
+  </div>
+  <div class="n-row" id="mathLabelSizeRow" style="display:none">
+    <span class="n-label">字号</span>
+    <label class="field">大小
+      <input type="range" id="mathLabelSize" min="8" max="32" step="1" value="13" style="width:90px">
+      <span id="mathLabelSizeVal">13</span>px
+    </label>
+    <button class="btn" id="mathLabelAuto" title="字号恢复为随显示大小自动调整">↺ 自动</button>
+    <span class="n-note">默认随「显示大小」自动调整，拖动滑块手动覆盖</span>
+  </div>
+  <div class="n-row" style="justify-content:flex-end; margin-top:8px;">
+    <button class="btn primary" id="btnGenMath">⚡ 绘制方程图像</button>
+  </div>
+  <div class="n-note">支持 y=f(x) 显式与 f(x,y)=0 隐式 · 函数 sin/cos/tan/sqrt/abs/log/exp/pow/min/max · 常量 pi/e · 运算符 + - * / ^ %</div>
+</div>
+
+<!-- 节点编辑器面板 -->
+<div id="nodePanel">
+  <div id="nodeHead">
+    <span>🧩 节点编辑器</span>
+    <span style="display:flex;gap:8px;align-items:center">
+      <button class="btn" id="btnScratchMax" title="放大为 Scratch 式全屏编辑器（积木拖放 + 舞台 + 实例信息）">⛶ 放大</button>
+      <button id="btnCloseNode" title="关闭">×</button>
+    </span>
+  </div>
+  <div id="nodeBody">
+    <div id="nodeLeft">
+      <div class="node-col-title">对象 <span class="layers-hint">框选像素 / 图层添加</span></div>
+      <input type="text" id="nodeNameInput" placeholder="选中对象后输入名称（实时重命名）" title="选中对象后在此输入名称即可重命名">
+      <div id="nodeObjList"></div>
+      <div class="node-col-title">实例 <span class="layers-hint">实例在画布上点击可选中</span></div>
+      <div id="nodeInstList"><div class="n-note">选中对象后显示其实例</div></div>
+      <div id="nodeLeftFoot">
+        <button class="btn primary" id="btnNodeInstance" title="把选中对象实例化到当前图层（原位），自动运行行为节点">⬇ 实例化</button>
+        <button class="btn danger" id="btnInstDel" title="删除画布上选中的实例（或列表中的）">🗑 删实例</button>
+        <button class="btn" id="btnNodeAddObj" title="框选添加对象：在画布上框选一片像素区域，剪切为可编辑节点图的对象（可撤销）">🔲 添加对象</button>
+      </div>
+    </div>
+    <div id="nodeRight">
+      <div class="node-col-title">节点图 <span class="layers-hint">左键框选打包 · 中键平移 · 滚轮缩放 · 单击选中</span></div>
+      <div id="nodeCanvas"></div>
+      <div id="nodeAddRow">
+        <select id="nodeCatSelect" title="节点分类"></select>
+        <select id="nodeTypeSelect" title="节点类型"></select>
+        <button class="btn" id="btnNodeAdd" title="把选中的节点添加到节点图">➕ 添加</button>
+        <button class="btn" id="btnPackGroup" title="把框选选中的节点打包为一个节点组（节点组分类中可复用/展开/导入导出）">📦 打包</button>
+        <button class="btn" id="btnExportGroups" title="把所有节点组导出为 JSON 文件">📤 导出</button>
+        <button class="btn" id="btnImportGroups" title="导入节点组 JSON 文件">📥 导入</button>
+        <button class="btn" id="btnNodeHint" title="节点用法说明">❓ 用法</button>
+        <button class="btn" id="btnZoomIn" title="放大节点画布">＋</button>
+        <button class="btn" id="btnZoomOut" title="缩小节点画布">－</button>
+        <button class="btn" id="btnZoomReset" title="重置视图">⟲</button>
+      </div>
+      <div id="groupEditRow" style="display:none;align-items:center;gap:8px;padding:4px 0">
+        <span class="n-note" style="margin:0">✏️ 正在编辑节点组：<b id="groupEditName"></b></span>
+        <button class="btn primary" id="btnGroupDone" title="完成编辑，回到主节点图">✔ 完成</button>
+      </div>
+      <input type="file" id="importGroupsFile" accept=".json" style="display:none">
+      <div id="varRow">
+        <input type="text" id="varNameInput" placeholder="新变量名（每个实例独立的值）" title="输入名称创建变量，然后用「变量」分类节点读写">
+        <button class="btn" id="btnVarAdd">➕ 建变量</button>
+        <span class="n-note" id="varHint"></span>
+      </div>
+      <div id="nodeRunRow">
+        <span class="n-note" id="nodeRunHint">实例化后需点击运行才执行</span>
+        <button class="btn primary" id="btnNodeRun">▶ 运行全部</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 全屏节点编辑器（放大） -->
+<div id="scratchOverlay">
+  <div id="scratchHead">
+    <span>🧩 节点编辑器（全屏） <span class="layers-hint">节点拖放 + 端口连线 · 舞台实时预览</span></span>
+    <span style="display:flex;gap:8px;align-items:center">
+      <button class="btn primary" id="btnScratchRun">⏹ 停止全部</button>
+      <button class="btn primary" id="scratchGroupDone" style="display:none" title="完成节点组编辑，回到主节点图">✔ 完成编辑组</button>
+      <button class="btn" id="btnScratchBack" title="返回小面板布局">⬅ 返回</button>
+    </span>
+  </div>
+  <div id="scratchBody">
+    <div id="scratchCats"></div>
+    <div id="scratchLib">
+      <div class="scratch-col-title">节点库 <span class="layers-hint">点击节点添加到画布（含「节点组」分类的可复用组）</span></div>
+      <div id="scratchPalette"></div>
+      <div id="scratchGroupTools" title="节点组：框选打包 / 导出 / 导入 JSON 文件">
+        <button class="btn" id="scratchBtnPack" title="把画布上框选选中的节点打包为节点组">📦 打包</button>
+        <button class="btn" id="scratchBtnExport" title="导出全部节点组为 JSON 文件">📤 导出</button>
+        <button class="btn" id="scratchBtnImport" title="导入节点组 JSON 文件">📥 导入</button>
+      </div>
+    </div>
+    <div id="scratchMain">
+      <div class="scratch-col-title">节点画布 <span class="layers-hint">拖动节点 · 端口连线 · 点 × 删节点</span></div>
+      <div id="scratchCanvas"></div>
+    </div>
+    <div id="scratchRight">
+      <div class="scratch-col-title">舞台（正方形 · 网格大小可调）</div>
+      <div id="stageBox"><canvas id="stageCanvas"></canvas></div>
+      <div id="stageCtrl">
+        <label>舞台大小 <input type="range" id="stageSize" min="160" max="560" step="10" value="320"><span id="stageSizeVal">320</span>px</label>
+        <label>网格大小 <input type="range" id="stageGrid" min="25" max="400" step="5" value="100"><span id="stageGridVal">100</span>%</label>
+      </div>
+      <div class="scratch-col-title">对象与实例 <span class="layers-hint">选择对象后「⬇ 实例化」添加到当前图层</span></div>
+      <div style="display:flex;gap:6px">
+        <select id="scratchObjSel" title="选择对象" style="flex:1"></select>
+        <button class="btn danger" id="scratchBtnDelObj" title="删除选中的对象及其实例">🗑</button>
+      </div>
+      <div id="scratchInstList"></div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button class="btn primary" id="scratchBtnInst" title="把选中对象实例化到当前图层">⬇ 实例化</button>
+        <button class="btn danger" id="scratchBtnDelInst" title="删除选中的实例">🗑 删实例</button>
+      </div>
+      <div class="scratch-col-title" style="margin-top:8px">变量 <span class="layers-hint">每个实例独立的值</span></div>
+      <div id="scratchVarRow">
+        <input type="text" id="scratchVarNameInput" placeholder="新变量名">
+        <button class="btn" id="scratchVarBtn">➕ 建变量</button>
+        <span class="n-note" id="scratchVarHint"></span>
+      </div>
+      <div class="scratch-col-title" style="margin-top:8px">实例信息</div>
+      <div id="instInfo"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 统计结果面板 -->
+<div id="statsPanel">
+  <div id="statsPanelHead"><span>📊 图像统计</span><button id="btnCloseStats" title="关闭">×</button></div>
+  <div id="statsBody"></div>
+  <div id="statsFoot">
+    <button class="btn" id="btnStatsCsv" title="单独导出统计表（CSV）">⬇ 导出统计表</button>
+    <button class="btn primary" id="btnStatsPngCsv" title="同时导出图片 PNG 和统计表 CSV">⬇ 图片+统计表</button>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept=".json,application/json" hidden>
+<input type="file" id="imageInput" accept="image/*" hidden>
+
+<div id="colorInfo"></div>
+
+<div id="hint">
+  <b>左键拖动</b>：绘制 / 图形 / 统计 · <b>右键拖动</b>：平移 · <b>滚轮</b>：缩放<br>
+  <b>空格+左键</b>：平移 · <b>触屏</b>：单指绘制，双指缩放/平移 · B/E：画笔/橡皮 · H：隐藏 · Ctrl+Z 撤销<br>
+  左侧 ▤ 图层：新建/复制/删除/隐藏图层 · 右侧工具栏：封闭图形（矩形/圆形/三角形）/ 填充 / 直线 / 统计 · ⋯ 更多：拾色器、噪声、数学方程
+</div>
+
+<div id="importStatus"></div>
+
+<!-- 设置面板 -->
+<div id="settingsMask">
+  <div id="settingsPanel">
+    <div id="settingsHead">
+      <span id="settingsTitle">⚙ 设置</span>
+      <button id="btnCloseSettings" title="关闭">×</button>
+    </div>
+    <div class="s-row">
+      <span class="s-label">界面</span>
+      <button class="tool-btn" id="settingsHideUI" title="手动隐藏/显示工具栏与提示">🙈 隐藏工具栏与提示</button>
+    </div>
+    <div class="s-row">
+      <span class="s-label">工具</span>
+      <select id="settingsTool">
+        <option value="brush">🖌 画笔</option>
+        <option value="eraser">🧹 橡皮</option>
+        <option value="picker">🎯 拾色器</option>
+        <option value="rect">▭ 矩形</option>
+        <option value="circle">◯ 圆形</option>
+        <option value="triangle">△ 三角形</option>
+        <option value="fill">🪣 封闭填充</option>
+        <option value="line">╱ 直线</option>
+        <option value="stats">📊 统计</option>
+      </select>
+      <span class="tool-btn" id="settingsUndo" title="撤销（Ctrl+Z）">↶ 撤销</span>
+      <span class="tool-btn" id="settingsRedo" title="重做（Ctrl+Shift+Z / Ctrl+Y）">↷ 重做</span>
+    </div>
+    <div class="s-row">
+      <span class="s-label">撤销</span>
+      <label class="field">步数
+        <input type="range" id="settingsUndoSteps" min="1" max="256" step="1" value="16">
+        <span id="settingsUndoStepsVal">16</span>
+      </label>
+      <span class="s-note">Ctrl+Z 撤销 · Ctrl+Shift+Z / Ctrl+Y 重做</span>
+    </div>
+    <div class="s-row">
+      <span class="s-label">笔刷</span>
+      <select id="settingsBrushMode">
+        <option value="square">方块笔刷</option>
+        <option value="custom">自定义笔刷</option>
+      </select>
+      <label class="field">大小
+        <input type="range" id="settingsBrushSize" min="1" max="32" step="1" value="4">
+        <span id="settingsBrushSizeVal">4</span>px
+      </label>
+      <button class="btn" id="settingsEditBrush" title="进入自定义笔刷画板，绘制/保存/导入导出笔刷">✏️ 编辑笔刷</button>
+    </div>
+    <div class="s-row">
+      <span class="s-label">橡皮</span>
+      <select id="settingsEraserMode">
+        <option value="square">方块橡皮</option>
+        <option value="custom">自定义橡皮</option>
+      </select>
+      <label class="field">大小
+        <input type="range" id="settingsEraserSize" min="1" max="32" step="1" value="4">
+        <span id="settingsEraserSizeVal">4</span>px
+      </label>
+      <button class="btn" id="settingsEditEraser" title="进入自定义橡皮画板，绘制/保存/导入导出橡皮">✏️ 编辑橡皮</button>
+    </div>
+    <div class="s-row">
+      <span class="s-label">颜色</span>
+      <input type="color" id="settingsColor" value="#3b82f6">
+    </div>
+    <div class="s-row">
+      <span class="s-label">颜色代码</span>
+      <button class="tool-btn" id="settingsColorInfo" title="开启后，鼠标所在格子出现红色选择网格，并显示颜色代码与坐标">👁 显示颜色代码与坐标</button>
+    </div>
+    <div class="s-row">
+      <span class="s-label">网格</span>
+      <button class="tool-btn active" id="settingsGrid" title="显示 / 隐藏网格线">▦ 显示网格线</button>
+      <button class="tool-btn active" id="settingsAxis" title="显示 / 隐藏原点坐标轴（独立于网格线）">＋ 显示坐标轴</button>
+      <label class="field">网格大小
+        <select id="settingsGridStep" title="网格线的间距（多少像素一条线）；自动 = 随缩放自适应">
+          <option value="auto" selected>自动（随缩放）</option>
+          <option value="1">1 px</option>
+          <option value="2">2 px</option>
+          <option value="4">4 px</option>
+          <option value="8">8 px</option>
+          <option value="16">16 px</option>
+          <option value="32">32 px</option>
+          <option value="64">64 px</option>
+          <option value="128">128 px</option>
+        </select>
+      </label>
+    </div>
+    <div class="s-row">
+      <span class="s-label">工程</span>
+      <label class="field">导出格式
+        <select id="settingsExportFormat" title="导出工程文件的格式">
+          <option value="v3" selected>v3 紧凑格式</option>
+          <option value="v2">v2 旧版兼容</option>
+        </select>
+      </label>
+      <label class="field" id="compressField">压缩等级
+        <input type="range" id="settingsCompressLevel" min="0" max="10" step="1" value="6">
+        <span id="settingsCompressLevelVal">6</span>
+      </label>
+      <span class="s-note">v3：调色板+RLE，可压缩 · v2：pixels 明文数组（文件较大，兼容旧版）；导入自动识别两种格式</span>
+    </div>
+  </div>
+</div>
+
+<canvas id="canvas" tabindex="-1"></canvas>
+
+<!-- 自定义笔刷画板 -->
+<div id="modalMask">
+  <div id="modal">
+    <div id="modalHead">
+      <span id="modalTitle">自定义笔刷</span>
+      <button id="btnCloseModal" title="关闭">×</button>
+    </div>
+    <div id="modalControls">
+      <label class="field">画板尺寸
+        <select id="modalSizeSelect">
+          <option value="8">8×8</option>
+          <option value="16" selected>16×16</option>
+          <option value="24">24×24</option>
+          <option value="32">32×32</option>
+          <option value="48">48×48</option>
+          <option value="64">64×64</option>
+          <option value="96">96×96</option>
+          <option value="128">128×128</option>
+        </select>
+      </label>
+      <span class="tool-btn active" id="modalBtnPaint">🖌 画</span>
+      <span class="tool-btn" id="modalBtnErase">🧹 擦</span>
+      <span class="tool-btn" id="modalUndoBtn" title="撤销（画板，最多 16 步）">↶</span>
+      <span class="tool-btn" id="modalRedoBtn" title="重做（画板，最多 16 步）">↷</span>
+      <input type="color" id="modalColor" value="#332e2d" title="画板颜色">
+    </div>
+    <div id="modalMain">
+      <canvas id="modalCanvas" width="480" height="480"></canvas>
+      <div id="modalSideTools">
+        <span class="tool-btn" id="modalHideTools" title="隐藏 / 展开画板工具栏">»</span>
+        <span class="tool-btn" id="modalToolLine" title="直线">╱</span>
+        <span class="tool-btn" id="modalToolRect" title="矩形轮廓">▭</span>
+        <span class="tool-btn" id="modalToolCircle" title="圆形轮廓">◯</span>
+        <span class="tool-btn" id="modalToolTriangle" title="三角形轮廓">△</span>
+      </div>
+    </div>
+    <div id="modalFoot">
+      <button class="btn" id="modalBtnClear">清空画板</button>
+      <button class="btn" id="modalBtnImport" title="导入笔刷 JSON">导入笔刷</button>
+      <button class="btn" id="modalBtnExport" title="导出笔刷 JSON">导出笔刷</button>
+      <button class="btn primary" id="modalBtnSave">💾 保存为当前笔刷</button>
+    </div>
+  </div>
+  <input type="file" id="modalFileInput" accept=".json,application/json" hidden>
+</div>
+
+<script src="pixel-canvas.js"></script>
+<script src="node-system.js"></script>
+<script src="node-ther.js"></script>
+<script src="vector-canvas.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,5 @@
+# Reasonix 内部文件（会话历史、任务快照等）
+.reasonix/
+
+# 临时测试脚本
+*.tmp.js

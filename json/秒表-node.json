@@ -1,0 +1,334 @@
+{
+  "秒表": {
+    "graph": {
+      "nodes": [
+        {
+          "id": 1,
+          "type": "time",
+          "p": {},
+          "x": 20,
+          "y": 20
+        },
+        {
+          "id": 2,
+          "type": "constNum",
+          "p": {
+            "v": 60
+          },
+          "x": 20,
+          "y": 80
+        },
+        {
+          "id": 3,
+          "type": "constNum",
+          "p": {
+            "v": 100
+          },
+          "x": 20,
+          "y": 140
+        },
+        {
+          "id": 4,
+          "type": "constNum",
+          "p": {
+            "v": 10
+          },
+          "x": 20,
+          "y": 200
+        },
+        {
+          "id": 5,
+          "type": "constNum",
+          "p": {
+            "v": 10
+          },
+          "x": 20,
+          "y": 260
+        },
+        {
+          "id": 6,
+          "type": "numDiv",
+          "p": {},
+          "x": 150,
+          "y": 20
+        },
+        {
+          "id": 7,
+          "type": "numFloor",
+          "p": {},
+          "x": 280,
+          "y": 20
+        },
+        {
+          "id": 8,
+          "type": "numMod",
+          "p": {},
+          "x": 410,
+          "y": 20
+        },
+        {
+          "id": 9,
+          "type": "numDiv",
+          "p": {},
+          "x": 540,
+          "y": 20
+        },
+        {
+          "id": 10,
+          "type": "numFloor",
+          "p": {},
+          "x": 670,
+          "y": 20
+        },
+        {
+          "id": 11,
+          "type": "numMod",
+          "p": {},
+          "x": 540,
+          "y": 100
+        },
+        {
+          "id": 12,
+          "type": "varGet",
+          "p": {
+            "var": "lastN"
+          },
+          "x": 90,
+          "y": 200
+        },
+        {
+          "id": 13,
+          "type": "numEq",
+          "p": {},
+          "x": 280,
+          "y": 220
+        },
+        {
+          "id": 14,
+          "type": "numNot",
+          "p": {},
+          "x": 410,
+          "y": 220
+        },
+        {
+          "id": 15,
+          "type": "ifCond",
+          "p": {
+            "conds": [
+              "c0"
+            ]
+          },
+          "x": 540,
+          "y": 220
+        },
+        {
+          "id": 16,
+          "type": "deleteObjInst",
+          "p": {
+            "obj": -2
+          },
+          "x": 700,
+          "y": 140
+        },
+        {
+          "id": 17,
+          "type": "constVec",
+          "p": {
+            "x": 0,
+            "y": 0
+          },
+          "x": 90,
+          "y": 340
+        },
+        {
+          "id": 18,
+          "type": "constVec",
+          "p": {
+            "x": 4,
+            "y": 0
+          },
+          "x": 90,
+          "y": 400
+        },
+        {
+          "id": 19,
+          "type": "createObjInst",
+          "p": {},
+          "x": 840,
+          "y": 140
+        },
+        {
+          "id": 20,
+          "type": "createObjInst",
+          "p": {},
+          "x": 980,
+          "y": 140
+        },
+        {
+          "id": 21,
+          "type": "varSet",
+          "p": {
+            "var": "lastN"
+          },
+          "x": 1120,
+          "y": 140
+        },
+        {
+          "id": 22,
+          "type": "whenStart",
+          "p": {},
+          "x": 20,
+          "y": 300
+        }
+      ],
+      "conns": [
+        {
+          "from": 1,
+          "fromSock": "out",
+          "to": 6,
+          "toSock": "a"
+        },
+        {
+          "from": 2,
+          "fromSock": "out",
+          "to": 6,
+          "toSock": "b"
+        },
+        {
+          "from": 6,
+          "fromSock": "out",
+          "to": 7,
+          "toSock": "a"
+        },
+        {
+          "from": 7,
+          "fromSock": "out",
+          "to": 8,
+          "toSock": "a"
+        },
+        {
+          "from": 3,
+          "fromSock": "out",
+          "to": 8,
+          "toSock": "b"
+        },
+        {
+          "from": 8,
+          "fromSock": "out",
+          "to": 9,
+          "toSock": "a"
+        },
+        {
+          "from": 4,
+          "fromSock": "out",
+          "to": 9,
+          "toSock": "b"
+        },
+        {
+          "from": 9,
+          "fromSock": "out",
+          "to": 10,
+          "toSock": "a"
+        },
+        {
+          "from": 8,
+          "fromSock": "out",
+          "to": 11,
+          "toSock": "a"
+        },
+        {
+          "from": 5,
+          "fromSock": "out",
+          "to": 11,
+          "toSock": "b"
+        },
+        {
+          "from": 8,
+          "fromSock": "out",
+          "to": 13,
+          "toSock": "a"
+        },
+        {
+          "from": 12,
+          "fromSock": "out",
+          "to": 13,
+          "toSock": "b"
+        },
+        {
+          "from": 13,
+          "fromSock": "out",
+          "to": 14,
+          "toSock": "a"
+        },
+        {
+          "from": 14,
+          "fromSock": "out",
+          "to": 15,
+          "toSock": "c0"
+        },
+        {
+          "from": 17,
+          "fromSock": "out",
+          "to": 19,
+          "toSock": "pos"
+        },
+        {
+          "from": 10,
+          "fromSock": "out",
+          "to": 19,
+          "toSock": "objIn"
+        },
+        {
+          "from": 18,
+          "fromSock": "out",
+          "to": 20,
+          "toSock": "pos"
+        },
+        {
+          "from": 11,
+          "fromSock": "out",
+          "to": 20,
+          "toSock": "objIn"
+        },
+        {
+          "from": 8,
+          "fromSock": "out",
+          "to": 21,
+          "toSock": "v"
+        }
+      ],
+      "flows": [
+        {
+          "from": 22,
+          "to": 15
+        },
+        {
+          "from": 15,
+          "to": 16
+        },
+        {
+          "from": 16,
+          "to": 19
+        },
+        {
+          "from": 19,
+          "to": 20
+        },
+        {
+          "from": 20,
+          "to": 21
+        }
+      ]
+    },
+    "inputs": [
+      {
+        "extKey": "i0",
+        "nodeId": 16,
+        "sockKey": "v",
+        "type": "num",
+        "label": "删除对象实例·触发"
+      }
+    ],
+    "outputs": []
+  }
+}

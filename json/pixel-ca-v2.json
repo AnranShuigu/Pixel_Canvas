@@ -1,0 +1,70 @@
+{
+  "app": "infinite-grid-canvas",
+  "version": 2,
+  "pixels": [
+    ["11", "10", "#3b82f6"],
+    ["12", "11", "#3b82f6"],
+    ["10", "12", "#3b82f6"],
+    ["11", "12", "#3b82f6"],
+    ["12", "12", "#3b82f6"]
+  ],
+  "shapes": [],
+  "layers": [
+    { "name": "图层 1", "visible": true, "shapes": [] }
+  ],
+  "objects": [
+    {
+      "id": 1,
+      "name": "元胞",
+      "kind": "selection",
+      "srcLayer": 0,
+      "w": 1,
+      "h": 1,
+      "srcX": 0,
+      "srcY": 0,
+      "pixels": [["0,0", "#3b82f6"]],
+      "vars": [],
+      "graph": {
+        "nodes": [
+          { "id": 1, "type": "whenStart", "p": {}, "x": 20, "y": 20 },
+          { "id": 2, "type": "repeat", "p": {}, "x": 200, "y": 20 },
+          { "id": 3, "type": "neighborCount", "p": {}, "x": 20, "y": 150 },
+          { "id": 4, "type": "constNum", "p": { "v": 2 }, "x": 180, "y": 150 },
+          { "id": 5, "type": "numEq", "p": {}, "x": 340, "y": 150 },
+          { "id": 6, "type": "constNum", "p": { "v": 3 }, "x": 180, "y": 230 },
+          { "id": 7, "type": "numEq", "p": {}, "x": 340, "y": 230 },
+          { "id": 8, "type": "numOr", "p": {}, "x": 500, "y": 190 },
+          { "id": 9, "type": "numNot", "p": {}, "x": 660, "y": 190 },
+          { "id": 10, "type": "pixelSet", "p": {}, "x": 400, "y": 20 },
+          { "id": 11, "type": "deleteSelf", "p": {}, "x": 600, "y": 20 },
+          { "id": 12, "type": "createInstanceAt", "p": {}, "x": 800, "y": 20 }
+        ],
+        "conns": [
+          { "from": 3, "fromSock": "out", "to": 5, "toSock": "a" },
+          { "from": 4, "fromSock": "out", "to": 5, "toSock": "b" },
+          { "from": 3, "fromSock": "out", "to": 7, "toSock": "a" },
+          { "from": 6, "fromSock": "out", "to": 7, "toSock": "b" },
+          { "from": 5, "fromSock": "out", "to": 8, "toSock": "a" },
+          { "from": 7, "fromSock": "out", "to": 8, "toSock": "b" },
+          { "from": 8, "fromSock": "out", "to": 9, "toSock": "a" },
+          { "from": 8, "fromSock": "out", "to": 10, "toSock": "v" },
+          { "from": 9, "fromSock": "out", "to": 11, "toSock": "v" },
+          { "from": 7, "fromSock": "out", "to": 12, "toSock": "v" }
+        ],
+        "flows": [
+          { "from": 1, "to": 2 },
+          { "from": 2, "to": 10 },
+          { "from": 10, "to": 11 },
+          { "from": 11, "to": 12 }
+        ]
+      }
+    }
+  ],
+  "instances": [
+    { "id": 1, "objectIdx": 0, "x": 11, "y": 10, "layerIdx": 0, "st": {} },
+    { "id": 2, "objectIdx": 0, "x": 12, "y": 11, "layerIdx": 0, "st": {} },
+    { "id": 3, "objectIdx": 0, "x": 10, "y": 12, "layerIdx": 0, "st": {} },
+    { "id": 4, "objectIdx": 0, "x": 11, "y": 12, "layerIdx": 0, "st": {} },
+    { "id": 5, "objectIdx": 0, "x": 12, "y": 12, "layerIdx": 0, "st": {} }
+  ]
+}
