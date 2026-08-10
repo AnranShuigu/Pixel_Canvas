@@ -1929,6 +1929,8 @@ function fillScratchCats() {
 }
 function fillScratchPalette() {
   els.scratchPalette.innerHTML = '';
+  // 变量区只在选中「变量」分类时展开显示（新建变量属于变量类型节点库）
+  if (els.scratchVarRow) els.scratchVarRow.style.display = (scratchCat === '变量') ? 'flex' : 'none';
   if (scratchCat === '节点组') { // 列出所有节点组，点击添加为单个组节点
     if (!Object.keys(GROUPS).length) {
       const note = document.createElement('span');
@@ -2191,10 +2193,26 @@ function addVariable(inputEl) {
 function renderVarUI() {
   const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
   const hint = obj
-    ? ('变量：' + (obj.vars && obj.vars.length ? obj.vars.join(', ') : '（无）'))
+    ? ('变量：' + (obj.vars && obj.vars.length ? obj.vars.length + ' 个' : '（无）'))
     : '选中对象后创建变量';
   els.varHint.textContent = hint;
-  if (els.scratchVarHint) els.scratchVarHint.textContent = hint;
+  // 全屏节点库：已添加的变量名称列表（显示在「添加新变量」按钮下方）
+  if (els.scratchVarList) {
+    els.scratchVarList.innerHTML = '';
+    if (obj && obj.vars && obj.vars.length) {
+      for (const name of obj.vars) {
+        const item = document.createElement('div');
+        item.className = 'scratch-var-item';
+        item.textContent = name;
+        els.scratchVarList.appendChild(item);
+      }
+    } else {
+      const note = document.createElement('span');
+      note.className = 'n-note';
+      note.textContent = '（暂无变量，输入名称点「添加新变量」）';
+      els.scratchVarList.appendChild(note);
+    }
+  }
 }
 els.btnVarAdd.addEventListener('click', function () { addVariable(els.varNameInput); });
 els.scratchVarBtn.addEventListener('click', function () { addVariable(els.scratchVarNameInput); });

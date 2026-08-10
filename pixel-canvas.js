@@ -139,6 +139,7 @@
     scratchObjSel: $('scratchObjSel'), scratchInstList: $('scratchInstList'),
     scratchBtnInst: $('scratchBtnInst'), scratchBtnDelInst: $('scratchBtnDelInst'),
     scratchVarNameInput: $('scratchVarNameInput'), scratchVarBtn: $('scratchVarBtn'), scratchVarHint: $('scratchVarHint'),
+    scratchVarRow: $('scratchVarRow'), scratchVarList: $('scratchVarList'),
     scratchBtnDelObj: $('scratchBtnDelObj'),
   };
   const mctx = els.modalCanvas.getContext('2d');

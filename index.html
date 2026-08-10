@@ -558,10 +558,11 @@
     box-shadow: 0 4px 14px rgba(0,0,0,.3);
   }
 
-#scratchVarRow{display:flex;gap:4px;align-items:center;padding:2px 0}
-#scratchVarRow input{width:60px;flex:1;min-width:0;font-size:11px;padding:3px 5px;border:1px solid #3a4256;border-radius:4px;background:#262c3a;color:#cdd3e0}
-#scratchVarRow .btn{font-size:11px;padding:3px 6px;white-space:nowrap}
-#scratchVarRow .n-note{font-size:10px;margin:0}
+#scratchVarRow{display:none;flex-direction:column;gap:4px;padding:6px 2px;border-top:1px solid #333a48;margin-top:6px}
+#scratchVarRow input{width:100%;box-sizing:border-box;font-size:11px;padding:4px 6px;border:1px solid #3a4256;border-radius:4px;background:#262c3a;color:#cdd3e0}
+#scratchVarRow .btn{width:100%;font-size:11px;padding:4px 6px;white-space:nowrap}
+#scratchVarList{display:flex;flex-direction:column;gap:2px;max-height:160px;overflow:auto}
+.scratch-var-item{font-size:11px;color:#cdd3e0;background:#262c3a;border:1px solid #3a4256;border-radius:4px;padding:3px 6px}
 #varRow{display:flex;gap:6px;align-items:center;padding:6px 0}
 #varRow input{flex:1;min-width:0;font-size:12px;padding:4px 6px;border:1px solid #3a4256;border-radius:4px;background:#262c3a;color:#cdd3e0}
 </style>
@@ -822,9 +823,9 @@
       <div id="scratchPalette"></div>
       <div class="scratch-col-title" style="margin-top:8px">变量 <span class="layers-hint">每个实例独立的值</span></div>
       <div id="scratchVarRow">
-        <input type="text" id="scratchVarNameInput" placeholder="新变量名">
-        <button class="btn" id="scratchVarBtn">➕ 建变量</button>
-        <span class="n-note" id="scratchVarHint"></span>
+        <input type="text" id="scratchVarNameInput" placeholder="新变量名（点击可命名）">
+        <button class="btn" id="scratchVarBtn">➕ 添加新变量</button>
+        <div id="scratchVarList"></div>
       </div>
       <div id="scratchGroupTools" title="节点组：框选打包 / 导出 / 导入 JSON 文件">
         <button class="btn" id="scratchBtnPack" title="把画布上框选选中的节点打包为节点组">📦 打包</button>
