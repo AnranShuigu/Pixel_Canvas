@@ -102,9 +102,35 @@ registerNodeType('pixelSet', {
   },
 });
 
+// ---- 停止当前脚本 / 停止全部执行（动作）：中断执行链 ----
+registerNodeType('stopSelf', {
+  name: '停止当前脚本', category: '控制', flowIn: true, flowOut: true,
+  desc: '停止当前实例的节点执行：立即中断本执行链，之后该实例不再执行任何节点（直到重新运行）',
+  run: function (inputs, inst) { inst.st.stopSelf = true; },
+});
+registerNodeType('stopAll', {
+  name: '停止全部执行', category: '控制', flowIn: true, flowOut: true,
+  desc: '停止所有对象的节点执行（相当于关闭「运行」开关）',
+  run: function () { state.nodesRunning = false; if (typeof updateRunButton === 'function') updateRunButton(); },
+});
+
+// ---- 鼠标的X坐标 / 鼠标的Y坐标（数据）：鼠标在像素画布上的世界格子坐标 ----
+registerNodeType('mouseX', {
+  name: '鼠标的X坐标', category: '侦测',
+  desc: '返回鼠标在像素画布上的 X 格子坐标（移动鼠标实时更新）',
+  sockets: [{ key: 'out', dir: 'out', type: 'num', label: 'X' }],
+  value: function () { return state.mouseGridX || 0; },
+});
+registerNodeType('mouseY', {
+  name: '鼠标的Y坐标', category: '侦测',
+  desc: '返回鼠标在像素画布上的 Y 格子坐标（移动鼠标实时更新）',
+  sockets: [{ key: 'out', dir: 'out', type: 'num', label: 'Y' }],
+  value: function () { return state.mouseGridY || 0; },
+});
+
 // ---- 邻域格子数（数据）：当前实例 8 邻域中有像素的格子数量（通用） ----
 registerNodeType('neighborCount', {
-  name: '邻域格子数', category: '自制',
+  name: '邻域格子数', category: '侦测',
   desc: '统计当前实例所在格子 8 邻域（上下左右+斜角）中有像素的格子数量（通用）',
   sockets: [{ key: 'out', dir: 'out', type: 'num', label: '邻居数' }],
   value: function (inputs, inst) {

@@ -8,6 +8,8 @@
     offsetY: 0,
     pixels: new Map(),     // 活动图层的像素（快捷引用，见 syncActiveLayerRefs）
     tool: 'brush',         // 'brush' | 'eraser'
+    mouseGridX: 0,         // 鼠标在画布上的世界格子坐标（侦测类【鼠标的X坐标】）
+    mouseGridY: 0,         // 鼠标在画布上的世界格子坐标（侦测类【鼠标的Y坐标】）
     brushMode: 'square',   // 'square' | 'custom'
     eraserMode: 'square',  // 'square' | 'custom'
     brushSize: 4,          // 方块笔刷大小（px）
@@ -1104,6 +1106,8 @@
   canvas.addEventListener('pointermove', function (e) {
     state.mouseOnCanvas = true;
     state.mouseX = e.clientX; state.mouseY = e.clientY;
+    const g2 = screenToGrid(e.clientX, e.clientY);
+    state.mouseGridX = g2[0]; state.mouseGridY = g2[1];
     const p = pointers.get(e.pointerId);
     if (p) { p.x = e.clientX; p.y = e.clientY; }
 

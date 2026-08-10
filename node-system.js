@@ -1013,6 +1013,7 @@ function execFlow(g, nodeId, inst, depth) {
   const visiting = new Set();
   const inputs = evalInputs(g, nodeId, inst, cache, visiting);
   if (def.run) { try { def.run(inputs, inst, node.p || {}, inst.st); } catch (e) { /* 节点错误跳过 */ } }
+  if (inst.st.stopSelf || !state.nodesRunning) return; // 停止当前脚本 / 停止全部执行：立即中断本链
   const next = findFlow(g, node.id);
   if (def.flow === 'repeat') {
     const raw = inputs.n;
@@ -1030,6 +1031,7 @@ function execFlow(g, nodeId, inst, depth) {
 function evalGraph(obj, inst) {
   const g = obj.graph;
   if (!g) return;
+  if (inst.st.stopSelf) return; // 停止当前脚本：该实例不再执行任何链
   // 节点组（groupRef）：递归执行被引用组的内图（组内 hats/动作照常）
   for (const node of g.nodes) {
     if (node.type !== 'groupRef') continue;

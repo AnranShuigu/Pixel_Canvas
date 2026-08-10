@@ -557,6 +557,13 @@
     font-size: 12px; white-space: nowrap;
     box-shadow: 0 4px 14px rgba(0,0,0,.3);
   }
+
+#scratchVarRow{display:flex;gap:4px;align-items:center;padding:2px 0}
+#scratchVarRow input{width:60px;flex:1;min-width:0;font-size:11px;padding:3px 5px;border:1px solid #3a4256;border-radius:4px;background:#262c3a;color:#cdd3e0}
+#scratchVarRow .btn{font-size:11px;padding:3px 6px;white-space:nowrap}
+#scratchVarRow .n-note{font-size:10px;margin:0}
+#varRow{display:flex;gap:6px;align-items:center;padding:6px 0}
+#varRow input{flex:1;min-width:0;font-size:12px;padding:4px 6px;border:1px solid #3a4256;border-radius:4px;background:#262c3a;color:#cdd3e0}
 </style>
 </head>
 <body>
@@ -768,6 +775,11 @@
     <div id="nodeRight">
       <div class="node-col-title">节点图 <span class="layers-hint">左键框选打包 · 中键平移 · 滚轮缩放 · 单击选中</span></div>
       <div id="nodeCanvas"></div>
+      <div id="varRow">
+        <input type="text" id="varNameInput" placeholder="新变量名（每个实例独立的值）" title="输入名称创建变量，然后用「变量」分类节点读写">
+        <button class="btn" id="btnVarAdd">➕ 建变量</button>
+        <span class="n-note" id="varHint"></span>
+      </div>
       <div id="nodeAddRow">
         <select id="nodeCatSelect" title="节点分类"></select>
         <select id="nodeTypeSelect" title="节点类型"></select>
@@ -785,11 +797,6 @@
         <button class="btn primary" id="btnGroupDone" title="完成编辑，回到主节点图">✔ 完成</button>
       </div>
       <input type="file" id="importGroupsFile" accept=".json" style="display:none">
-      <div id="varRow">
-        <input type="text" id="varNameInput" placeholder="新变量名（每个实例独立的值）" title="输入名称创建变量，然后用「变量」分类节点读写">
-        <button class="btn" id="btnVarAdd">➕ 建变量</button>
-        <span class="n-note" id="varHint"></span>
-      </div>
       <div id="nodeRunRow">
         <span class="n-note" id="nodeRunHint">实例化后需点击运行才执行</span>
         <button class="btn primary" id="btnNodeRun">▶ 运行全部</button>
@@ -813,6 +820,12 @@
     <div id="scratchLib">
       <div class="scratch-col-title">节点库 <span class="layers-hint">点击节点添加到画布（含「节点组」分类的可复用组）</span></div>
       <div id="scratchPalette"></div>
+      <div class="scratch-col-title" style="margin-top:8px">变量 <span class="layers-hint">每个实例独立的值</span></div>
+      <div id="scratchVarRow">
+        <input type="text" id="scratchVarNameInput" placeholder="新变量名">
+        <button class="btn" id="scratchVarBtn">➕ 建变量</button>
+        <span class="n-note" id="scratchVarHint"></span>
+      </div>
       <div id="scratchGroupTools" title="节点组：框选打包 / 导出 / 导入 JSON 文件">
         <button class="btn" id="scratchBtnPack" title="把画布上框选选中的节点打包为节点组">📦 打包</button>
         <button class="btn" id="scratchBtnExport" title="导出全部节点组为 JSON 文件">📤 导出</button>
@@ -839,12 +852,6 @@
       <div style="display:flex;gap:6px;margin-top:6px">
         <button class="btn primary" id="scratchBtnInst" title="把选中对象实例化到当前图层">⬇ 实例化</button>
         <button class="btn danger" id="scratchBtnDelInst" title="删除选中的实例">🗑 删实例</button>
-      </div>
-      <div class="scratch-col-title" style="margin-top:8px">变量 <span class="layers-hint">每个实例独立的值</span></div>
-      <div id="scratchVarRow">
-        <input type="text" id="scratchVarNameInput" placeholder="新变量名">
-        <button class="btn" id="scratchVarBtn">➕ 建变量</button>
-        <span class="n-note" id="scratchVarHint"></span>
       </div>
       <div class="scratch-col-title" style="margin-top:8px">实例信息</div>
       <div id="instInfo"></div>
