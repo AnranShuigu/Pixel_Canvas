@@ -24,16 +24,17 @@
     axisLabelSize: 13,         // 刻度数字字号（屏幕 px，手动覆盖值）
     axisLabelAuto: true,       // 字号是否随「显示大小」自动调整
     compressLevel: 6,          // 工程压缩等级 0~10
-    exportFormat: 'v3',        // 工程导出格式：'v3'（紧凑，类似 pig2.json）| 'v2'（旧版兼容，类似 pig.json）
+    exportFormat: 'v5',        // 工程导出格式：'v5'（每图层独立 pixels，导入逐层恢复）| 'v3'（紧凑，可压缩）| 'v2'（旧版兼容，明文数组）
+    exportImageFormat: 'png',  // 导出图片格式：'png' | 'jpg' | 'webp' | 'gif' | 'apng'
     maxUndoSteps: 16,          // 撤销 / 重做步数（1~256）
     stats: null,               // 最近一次统计结果
     mouseOnCanvas: false,
     mouseX: 0, mouseY: 0,  // 最近一次鼠标在画布上的位置（CSS px）
-    vectorMode: false,         // 绘制模式：false=像素绘制，true=矢量图绘制
     vectorShapes: [],          // 活动图层的矢量对象（快捷引用，见 syncActiveLayerRefs）
     layers: [                 // 图层列表（自底向上）：{ name, visible, pixels, shapes }
       { name: '图层 1', visible: true, pixels: new Map(), shapes: [] },
     ],
+    extra: {},                 // 导入工程时保留的扩展字段（如思维导图 labels），导出时原样带出
     activeLayer: 0,            // 当前活动图层索引
     layersPanelVisible: true,  // 图层面板是否显示
     // ---- 节点系统（node-system.js）----
@@ -60,11 +61,12 @@
 
   const $ = function (id) { return document.getElementById(id); };
   const els = {
-    btnBrush: $('btnBrush'), btnEraser: $('btnEraser'),
+    rToolBrush: $('rToolBrush'), brushMenu: $('brushMenu'),
     btnUndo: $('btnUndo'), btnRedo: $('btnRedo'),
     btnSettings: $('btnSettings'), btnHideUI: $('btnHideUI'), btnRestoreUI: $('btnRestoreUI'),
-    sizeSlider: $('sizeSlider'), sizeVal: $('sizeVal'), sizeField: $('sizeField'),
-    colorPicker: $('colorPicker'),
+    bpBrushMode: $('bpBrushMode'), bpBrushSize: $('bpBrushSize'), bpBrushSizeVal: $('bpBrushSizeVal'),
+    bpEraserMode: $('bpEraserMode'), bpEraserSize: $('bpEraserSize'), bpEraserSizeVal: $('bpEraserSizeVal'),
+    bpColor: $('bpColor'), brushPanel: $('brushPanel'),
     zoomVal: $('zoomVal'), btnReset: $('btnReset'),
     btnImportImage: $('btnImportImage'), btnExportPng: $('btnExportPng'),
     btnExportJson: $('btnExportJson'), btnImportJson: $('btnImportJson'), btnClear: $('btnClear'),
@@ -81,6 +83,7 @@
     modalToolCircle: $('modalToolCircle'), modalToolTriangle: $('modalToolTriangle'),
     modalColor: $('modalColor'), modalBtnClear: $('modalBtnClear'),
     modalBtnImport: $('modalBtnImport'), modalBtnExport: $('modalBtnExport'), modalBtnSave: $('modalBtnSave'),
+    modalBtnLibrary: $('modalBtnLibrary'), brushLibrary: $('brushLibrary'), brushLibraryList: $('brushLibraryList'),
     modalFileInput: $('modalFileInput'),
     settingsMask: $('settingsMask'), btnCloseSettings: $('btnCloseSettings'), settingsHideUI: $('settingsHideUI'),
     settingsTool: $('settingsTool'), settingsUndo: $('settingsUndo'), settingsRedo: $('settingsRedo'),
@@ -94,8 +97,9 @@
     settingsCompressLevel: $('settingsCompressLevel'), settingsCompressLevelVal: $('settingsCompressLevelVal'),
     compressField: $('compressField'),
     settingsExportFormat: $('settingsExportFormat'),
+    settingsExportImageFormat: $('settingsExportImageFormat'),
     rToolShape: $('rToolShape'), shapeMenu: $('shapeMenu'),
-    rToolFill: $('rToolFill'), rToolLine: $('rToolLine'), rToolMove: $('rToolMove'), rToolSelect: $('rToolSelect'), selectMenu: $('selectMenu'),
+    rToolMove: $('rToolMove'), rToolSelect: $('rToolSelect'),
     rToolMore: $('rToolMore'), moreMenu: $('moreMenu'), btnOpenPicker: $('btnOpenPicker'), btnOpenNoise: $('btnOpenNoise'), btnOpenMath: $('btnOpenMath'),
     layersToggle: $('layersToggle'), layersPanel: $('layersPanel'), layersList: $('layersList'),
     btnLayerAdd: $('btnLayerAdd'), btnLayerDup: $('btnLayerDup'), btnLayerDel: $('btnLayerDel'),
@@ -113,8 +117,10 @@
     mathAxisLabels: $('mathAxisLabels'), mathLabelSize: $('mathLabelSize'),
     mathLabelSizeVal: $('mathLabelSizeVal'), mathLabelSizeRow: $('mathLabelSizeRow'),
     mathLabelAuto: $('mathLabelAuto'),
-    statsPanel: $('statsPanel'), statsBody: $('statsBody'),
-    btnCloseStats: $('btnCloseStats'), btnStatsCsv: $('btnStatsCsv'), btnStatsPngCsv: $('btnStatsPngCsv'),
+    statsBody: $('statsBody'),
+    btnCloseSelect: $('btnCloseSelect'), btnStatsCsv: $('btnStatsCsv'), btnStatsPngCsv: $('btnStatsPngCsv'),
+    btnSelClear: $('btnSelClear'), btnSelScale: $('btnSelScale'), btnSelRotate: $('btnSelRotate'), btnSelStats: $('btnSelStats'),
+    selW: $('selW'), selH: $('selH'), selAngle: $('selAngle'), selInfo: $('selInfo'), selStats: $('selStats'), selExportRow: $('selExportRow'), selectPanel: $('selectPanel'),
     btnNodeSelect: null, btnOpenNodeEditor: $('btnOpenNodeEditor'),
     nodePanel: $('nodePanel'), btnCloseNode: $('btnCloseNode'),
     nodeObjList: $('nodeObjList'), btnNodeInstance: $('btnNodeInstance'),
@@ -132,7 +138,7 @@
     btnScratchBack: $('btnScratchBack'), btnScratchRun: $('btnScratchRun'),
     scratchBtnPack: $('scratchBtnPack'), scratchBtnExport: $('scratchBtnExport'), scratchBtnImport: $('scratchBtnImport'),
     scratchGroupDone: $('scratchGroupDone'), scratchGroupTools: $('scratchGroupTools'),
-    scratchCats: $('scratchCats'), scratchPalette: $('scratchPalette'), scratchCanvas: $('scratchCanvas'),
+    scratchCats: $('scratchCats'), scratchPalette: $('scratchPalette'), scratchCanvas: $('scratchCanvas'), scratchPluginFile: $('scratchPluginFile'), scratchSearch: $('scratchSearch'),
     scratchLib: $('scratchLib'),
     stageCanvas: $('stageCanvas'), stageBox: $('stageBox'), stageSize: $('stageSize'), stageSizeVal: $('stageSizeVal'), scratchRight: $('scratchRight'),
     stageGrid: $('stageGrid'), stageGridVal: $('stageGridVal'), instInfo: $('instInfo'),
@@ -208,31 +214,23 @@
       const v = useNew ? (rec.length === 4 ? rec[3] : rec[2]) : (rec.length === 4 ? rec[2] : rec[1]);
       const L = state.layers[li];
       if (!L) continue; // 图层已被删除，跳过
-      if (v === null || v === undefined) L.pixels.delete(key);
-      else L.pixels.set(key, v);
+      if (srcImages.has(L)) {
+        // 图片模式（overlay）：undefined = 无编辑（显示原图），null = 擦除挖洞，颜色 = 覆盖
+        if (v === undefined) L.pixels.delete(key);
+        else if (v === null) L.pixels.set(key, null);
+        else L.pixels.set(key, v);
+      } else {
+        if (v === null || v === undefined) L.pixels.delete(key);
+        else L.pixels.set(key, v);
+      }
       markDirtyKey(key, li);
     }
     requestRender();
   }
-  // 矢量对象操作记录：{ kind:'vector', layerIdx, action:'add'|'remove', shape }
-  // useNew=false 撤销（add→remove、remove→add）；useNew=true 重做（执行 action 本身）
-  function applyVectorOp(rec, useNew) {
-    const li = rec.layerIdx === undefined ? state.activeLayer : rec.layerIdx;
-    const shapes = state.layers[li] ? state.layers[li].shapes : null;
-    if (!shapes) return; // 图层已被删除
-    const doRemove = useNew ? (rec.action === 'remove') : (rec.action === 'add');
-    if (doRemove) {
-      const i = shapes.indexOf(rec.shape);
-      if (i >= 0) shapes.splice(i, 1);
-    } else {
-      shapes.push(rec.shape);
-    }
-  }
   function undo() {
     const rec = undoStack.pop();
     if (!rec) return;
-    if (Array.isArray(rec)) applyDiff(rec, false);
-    else applyVectorOp(rec, false);
+    applyDiff(rec, false);
     redoStack.push(rec);
     updateUndoUI();
     requestRender();
@@ -240,8 +238,7 @@
   function redo() {
     const rec = redoStack.pop();
     if (!rec) return;
-    if (Array.isArray(rec)) applyDiff(rec, true);
-    else applyVectorOp(rec, true);
+    applyDiff(rec, true);
     undoStack.push(rec);
     if (undoStack.length > state.maxUndoSteps) undoStack.shift();
     updateUndoUI();
@@ -264,17 +261,31 @@
     const i = key.indexOf(',');
     layerCache(layerIdx === undefined ? state.activeLayer : layerIdx)
       .dirty.add((+key.slice(0, i) >> 5) + ',' + (+key.slice(i + 1) >> 5));
+    const L = state.layers[layerIdx === undefined ? state.activeLayer : layerIdx];
+    if (L) {
+      const s = viewSnaps.get(L); if (s) s.dirty = true; // 缩小模式：快照标脏，下次绘制时重建
+      markOverlayKey(L, key); // 图片模式：扩展 overlay 边界并标脏合成画布
+    }
   }
 
   // 所有像素修改的唯一入口：记录撤销信息并写数据（默认写入活动图层，可指定 layerIdx）
   function paintCellRaw(key, newVal, layerIdx) {
     const li = layerIdx === undefined ? state.activeLayer : layerIdx;
-    const map = state.layers[li].pixels;
+    const L = state.layers[li];
+    const map = L.pixels;
     const old = map.get(key);
     if (old === newVal) return;
-    recordCell(key, old, newVal, li);
-    if (newVal === null || newVal === undefined) map.delete(key);
-    else map.set(key, newVal);
+    if (srcImages.has(L)) {
+      // 图片模式：只写 overlay（O(1)）——newVal=null 挖洞、颜色覆盖、undefined 恢复原图
+      recordCell(key, old, newVal, li);
+      if (newVal === null) map.set(key, null);
+      else if (newVal === undefined) map.delete(key);
+      else map.set(key, newVal);
+    } else {
+      recordCell(key, old, newVal, li);
+      if (newVal === null || newVal === undefined) map.delete(key);
+      else map.set(key, newVal);
+    }
     markDirtyKey(key, li); // 标记所在渲染块为脏，否则块缓存不会重建（填充等会不显示）
   }
 
@@ -332,9 +343,10 @@
   let fastMode = false;
   function updateUI() {
     const hidden = fastMode || state.uiHidden;
-    els.toolbarEl.style.display = hidden ? 'none' : '';
-    els.hintEl.style.display = hidden ? 'none' : '';
-    els.sideToolbar.style.display = hidden ? 'none' : '';
+    // 尊重用户通过 ⤒/⤍ 开关做的「单独隐藏」（dataset.userHidden），沉浸模式也不强制显示
+    els.toolbarEl.style.display = (hidden || els.toolbarEl.dataset.userHidden === '1') ? 'none' : '';
+    els.hintEl.style.display = (hidden || els.hintEl.dataset.userHidden === '1') ? 'none' : '';
+    els.sideToolbar.style.display = (hidden || els.sideToolbar.dataset.userHidden === '1') ? 'none' : '';
     els.layersPanel.style.display = hidden ? 'none' : '';
     els.layersToggle.style.display = hidden ? 'none' : '';
     els.btnHideUI.classList.toggle('active', state.uiHidden);
@@ -357,6 +369,22 @@
   const CHUNK = 32;
   const CHUNK_BUDGET_MS = 12;          // 每帧重建块的预算，超出的留到下帧（渐进渲染）
   const layerChunks = [];              // layerChunks[i] = { map: Map, dirty: Set }
+
+  // ---- 缩略快照（缩小模式） ----
+  // 缩小到一定程度后，可见区块数与 1/scale² 成正比（5% 缩放时可达 80 万块/帧），
+  // 逐块 drawImage + 块缓存 40000 上限被整体清空，会导致每帧几十万次绘制、永远建不完，直接卡死。
+  // 此时切换为「视图快照」：把每个可见图层渲染成一张低分辨率合并图，每帧一次 drawImage。
+  const SNAP_THRESHOLD = 4096;   // 可见块数超过该值 → 切换为快照模式
+  const SNAP_MAX_DIM = 4096;     // 快照输出最大边长（px），超出则提高每个输出像素对应的世界格数
+  const viewSnaps = new Map();   // 图层对象 -> 快照 { cv, ctx, img, w, h, px, py, pw, ph, P, ready, dirty, it, colCache }
+
+  // ---- 图片 LOD（导入图片双模式：原图 / 像素） ----
+  // 导入的图片先以「原图模式」保存（不栅格化进像素 Map）：
+  //   · 缩小时直接 drawImage 原图（GPU 平滑缩放一次调用）——超大图查看整图不再卡；
+  //   · 放大超过阈值后后台渐进栅格化，栅格化完成才显示像素格子；
+  //   · 图层一旦被编辑（画 / 填充 / 撤销重做等），原图失效，退回纯像素模式。
+  const IMG_LOD_THRESHOLD = 1;   // 缩放 ≥ 该值（1 格 ≥ 1px）显示像素格子；否则显示原图
+  const srcImages = new Map();   // 图层对象 -> { img, w, h, ox, oy, job, done, canvas, ctx, data }
   function layerCache(i) {
     if (!layerChunks[i]) layerChunks[i] = { map: new Map(), dirty: new Set() };
     return layerChunks[i];
@@ -367,6 +395,11 @@
     const cx0 = x0 >> 5, cx1 = x1 >> 5, cy0 = y0 >> 5, cy1 = y1 >> 5;
     for (let cy = cy0; cy <= cy1; cy++)
       for (let cx = cx0; cx <= cx1; cx++) c.dirty.add(cx + ',' + cy);
+    const L = state.layers[layerIdx === undefined ? state.activeLayer : layerIdx];
+    if (L) {
+      const s = viewSnaps.get(L); if (s) s.dirty = true; // 缩小模式：快照标脏，下次绘制时重建
+      markOverlayKey(L, x0 + ',' + y0); markOverlayKey(L, x1 + ',' + y1); // 图片模式：扩展 overlay 边界
+    }
   }
 
   function buildChunk(cx, cy, layerIdx) {
@@ -394,6 +427,243 @@
     }
   }
 
+  // ---------- 缩小模式：视图快照（合并绘制） ----------
+  // 把图层渲染成一张覆盖当前可视区域的低分辨率合并图：遍历图层像素一次，
+  // 每输出像素对应 P×P 个世界格，结束时一次 putImageData；绘制时一次 drawImage 放大到屏幕。
+  function hexToUint32(h) {
+    let s = h.charAt(0) === '#' ? h.slice(1) : h;
+    if (s.length === 3) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
+    const r = parseInt(s.slice(0, 2), 16), g = parseInt(s.slice(2, 4), 16), b = parseInt(s.slice(4, 6), 16);
+    const a = s.length >= 8 ? parseInt(s.slice(6, 8), 16) : 255;
+    return ((a & 255) << 24) | ((b & 255) << 16) | ((g & 255) << 8) | (r & 255); // ABGR (little-endian)
+  }
+  function pruneViewSnaps() {
+    for (const key of viewSnaps.keys()) if (state.layers.indexOf(key) < 0) viewSnaps.delete(key);
+  }
+  // 返回图层 li 覆盖可视范围的快照；范围 / 缩放 / 内容变化时重置并标脏
+  function ensureViewSnap(li, gx0, gy0, gx1, gy1) {
+    const L = state.layers[li];
+    let snap = viewSnaps.get(L);
+    const PW = gx1 - gx0 + 1, PH = gy1 - gy0 + 1;
+    // 快照世界范围：可视范围外扩 20%（P 对齐），小幅平移 / 缩放无需重建
+    const mx = Math.ceil(PW * 0.2), my = Math.ceil(PH * 0.2);
+    const rawPX = gx0 - mx, rawPY = gy0 - my, rawPX1 = gx1 + mx + 1, rawPY1 = gy1 + my + 1;
+    // 每输出像素的世界格数：按外扩后的范围保证输出尺寸不超过 SNAP_MAX_DIM
+    const P = Math.max(1, Math.ceil(Math.max(rawPX1 - rawPX, rawPY1 - rawPY) / SNAP_MAX_DIM));
+    const px0 = Math.floor(rawPX / P) * P, py0 = Math.floor(rawPY / P) * P;
+    const px1 = Math.ceil(rawPX1 / P) * P, py1 = Math.ceil(rawPY1 / P) * P;
+    const inStroke = !!(currentStroke && currentStroke.size > 0);
+    const need = !snap || snap.P !== P || snap.px !== px0 || snap.py !== py0 ||
+                 snap.px + snap.pw < px1 || snap.py + snap.ph < py1 ||
+                 (snap.dirty && !inStroke); // 笔画中延迟重建，避免每帧重置游标永远建不完
+    if (!need) return snap;
+    if (!snap) {
+      snap = { cv: document.createElement('canvas'), ctx: null, img: null, w: 0, h: 0, px: 0, py: 0, pw: 0, ph: 0, P: 1, ready: false, dirty: false, it: null, colCache: new Map() };
+      viewSnaps.set(L, snap);
+    }
+    snap.px = px0; snap.py = py0; snap.P = P;
+    snap.pw = Math.max(1, px1 - px0); snap.ph = Math.max(1, py1 - py0);
+    snap.w = Math.ceil(snap.pw / P); snap.h = Math.ceil(snap.ph / P);
+    if (snap.cv.width !== snap.w || snap.cv.height !== snap.h) { snap.cv.width = snap.w; snap.cv.height = snap.h; }
+    snap.ctx = snap.ctx || snap.cv.getContext('2d');
+    snap.ctx.clearRect(0, 0, snap.w, snap.h); // 清空旧内容，重建期间不显示错位旧图
+    snap.img = null;              // 强制重建全透明 ImageData
+    snap.ready = false; snap.dirty = false;
+    snap.it = L.pixels.entries(); // 渐进重建游标
+    return snap;
+  }
+  // 渐进重建快照：每帧最多 CHUNK_BUDGET_MS 时间，把图层像素写入快照 ImageData；
+  // 遍历完成时一次 putImageData 提交。返回是否仍在进行中。
+  function buildViewSnapSlice(snap) {
+    if (!snap.it) { snap.ready = true; return false; }
+    if (!snap.img || snap.imgW !== snap.w || snap.imgH !== snap.h) {
+      snap.img = snap.ctx.createImageData(snap.w, snap.h);
+      snap.imgW = snap.w; snap.imgH = snap.h;
+    }
+    const buf = new Uint32Array(snap.img.data.buffer);
+    const colCache = snap.colCache;
+    const t0 = performance.now();
+    while (performance.now() - t0 < CHUNK_BUDGET_MS) {
+      const nxt = snap.it.next();
+      if (nxt.done) {
+        snap.it = null; snap.ready = true;
+        snap.ctx.putImageData(snap.img, 0, 0);
+        break;
+      }
+      const key = nxt.value[0], col = nxt.value[1];
+      const i = key.indexOf(',');
+      const x = +key.slice(0, i), y = +key.slice(i + 1);
+      if (x >= snap.px && x < snap.px + snap.pw && y >= snap.py && y < snap.py + snap.ph) {
+        const dx = ((x - snap.px) / snap.P) | 0;
+        const dy = ((y - snap.py) / snap.P) | 0;
+        let u = colCache.get(col);
+        if (u === undefined) { u = hexToUint32(col); colCache.set(col, u); }
+        buf[dy * snap.w + dx] = u;
+      }
+    }
+    return !snap.ready;
+  }
+  // 缩小模式绘制：每个可见图层一次 drawImage + 该层实例；
+  // 笔画进行中快照延迟重建，新格子以屏幕坐标叠加绘制，保证实时反馈。
+  function drawChunksSnapped(gx0, gx1, gy0, gy1, p) {
+    pruneViewSnaps();
+    ctx.setTransform(p * state.scale, 0, 0, p * state.scale, p * state.offsetX, p * state.offsetY);
+    ctx.imageSmoothingEnabled = true;
+    let pending = false;
+    for (let li = 0; li < state.layers.length; li++) {
+      if (!state.layers[li].visible) continue;
+      const si = srcImages.get(state.layers[li]);
+      if (layerUseImage(li) && si) {
+        // 图片 LOD：原图模式 —— 一次 drawImage 渲染整张图，彻底绕过像素 Map 遍历 + overlay 合成
+        ctx.drawImage(si.img, si.ox, si.oy, si.w, si.h);
+        drawImageOverlay(ctx, li);
+        drawInstances(p, li);
+        continue;
+      }
+      const snap = ensureViewSnap(li, gx0, gy0, gx1, gy1);
+      if (buildViewSnapSlice(snap)) pending = true;
+      if (snap.ready || snap.cv.width) ctx.drawImage(snap.cv, snap.px, snap.py, snap.pw, snap.ph);
+      drawInstances(p, li);
+    }
+    // 笔画进行中：快照延迟重建，把本次笔画的新格子按屏幕坐标直接叠加绘制（至少 1px，保证可见）
+    if (currentStroke && currentStroke.size > 0) {
+      ctx.setTransform(p, 0, 0, p, 0, 0);
+      const sz = Math.max(1, Math.round(state.scale));
+      for (const rec of currentStroke.values()) {
+        const v = rec[3];
+        if (v === null || v === undefined) continue; // 擦除的格子笔画结束后由快照重建呈现
+        const key = rec[1], i = key.indexOf(',');
+        ctx.fillStyle = v;
+        ctx.fillRect(Math.round(+key.slice(0, i) * state.scale + state.offsetX),
+                     Math.round(+key.slice(i + 1) * state.scale + state.offsetY), sz, sz);
+      }
+    }
+    if (pending) requestRender();
+  }
+
+  // ---------- 图片 LOD：Overlay 增量编辑 ----------
+  // 图片模式图层 = 原图（只读基底，永不栅格化）+ L.pixels（编辑增量层 overlay）：
+  //   L.pixels 只存用户改过的格子：key->color 覆盖 / key->null 擦除（挖洞）；无条目 = 显示原图。
+  //   编辑 = 只写 overlay（O(编辑量)），渲染 = 原图一次 drawImage + overlay 小图合成，
+  //   因此编辑超大图、编辑后缩小查看都保持流畅。
+  // 读操作（拾色/填充/统计/框选/提取）需要「显示色 = 原图⊕overlay」，懒加载基底 si.base。
+
+  // 懒加载基底（原图逐像素数据，仅读操作需要时初始化一次）
+  function ensureBaseOf(L, si) {
+    if (si.base || si.baseBusy) return;
+    si.baseBusy = true;
+    const c = document.createElement('canvas');
+    c.width = si.w; c.height = si.h;
+    const cx = c.getContext('2d', { willReadFrequently: true });
+    cx.drawImage(si.img, 0, 0);
+    si.base = cx.getImageData(0, 0, si.w, si.h).data;
+    si.baseHex = new Map(); // 索引 -> hex 颜色缓存
+  }
+  // 显示色：overlay 优先；无条目读基底（透明=undefined，擦除=null）
+  function displayColor(L, x, y) {
+    const v = L.pixels.get(x + ',' + y);
+    if (v !== undefined) return v; // 颜色 或 null（擦除挖洞）
+    const si = srcImages.get(L);
+    if (!si) return undefined;
+    ensureBaseOf(L, si);
+    if (!si.base) return undefined;
+    const i = ((y - si.oy) * si.w + (x - si.ox)) * 4;
+    if (i < 0 || i >= si.base.length) return undefined;
+    const a = si.base[i + 3];
+    if (a === 0) return undefined; // 基底透明
+    let hex = si.baseHex.get(i);
+    if (hex === undefined) {
+      hex = rgbaToHex(si.base[i], si.base[i + 1], si.base[i + 2], a);
+      si.baseHex.set(i, hex);
+    }
+    return hex;
+  }
+  // 扩展 overlay 边界（编辑范围），并标记合成画布脏
+  function markOverlayKey(L, key) {
+    const si = srcImages.get(L);
+    if (!si) return;
+    const i = key.indexOf(',');
+    const x = +key.slice(0, i), y = +key.slice(i + 1);
+    if (!si.bbox) si.bbox = { x0: x, y0: y, x1: x, y1: y };
+    else {
+      if (x < si.bbox.x0) si.bbox.x0 = x; if (x > si.bbox.x1) si.bbox.x1 = x;
+      if (y < si.bbox.y0) si.bbox.y0 = y; if (y > si.bbox.y1) si.bbox.y1 = y;
+    }
+    si.overlayDirty = true;
+  }
+  // 重建 overlay 合成画布：bbox 内 原图局部 + overlay 覆盖 + null 挖洞
+  function rebuildOverlay(li) {
+    const L = state.layers[li];
+    const si = srcImages.get(L);
+    if (!si || !si.bbox) return;
+    const w = si.bbox.x1 - si.bbox.x0 + 1, h = si.bbox.y1 - si.bbox.y0 + 1;
+    if (!si.overlay) si.overlay = document.createElement('canvas');
+    if (si.overlay.width !== w || si.overlay.height !== h) { si.overlay.width = w; si.overlay.height = h; }
+    const oc = si.overlay.getContext('2d');
+    oc.clearRect(0, 0, w, h);
+    // 原图局部（bbox 相对原图原点裁剪）
+    const sx = si.bbox.x0 - si.ox, sy = si.bbox.y0 - si.oy;
+    oc.drawImage(si.img, sx, sy, w, h, 0, 0, w, h);
+    // overlay 覆盖色
+    for (const [key, v] of L.pixels) {
+      if (v === null) continue;
+      const i = key.indexOf(',');
+      const x = +key.slice(0, i) - si.bbox.x0, y = +key.slice(i + 1) - si.bbox.y0;
+      if (x < 0 || x >= w || y < 0 || y >= h) continue;
+      oc.fillStyle = v;
+      oc.fillRect(x, y, 1, 1);
+    }
+    // 擦除挖洞（destination-out）
+    oc.globalCompositeOperation = 'destination-out';
+    for (const [key, v] of L.pixels) {
+      if (v !== null) continue;
+      const i = key.indexOf(',');
+      const x = +key.slice(0, i) - si.bbox.x0, y = +key.slice(i + 1) - si.bbox.y0;
+      if (x < 0 || x >= w || y < 0 || y >= h) continue;
+      oc.fillRect(x, y, 1, 1);
+    }
+    oc.globalCompositeOperation = 'source-over';
+    si.overlayDirty = false;
+  }
+  // 把 overlay 合成结果画到主画布（世界坐标变换下）
+  function drawImageOverlay(ctx2, li) {
+    const L = state.layers[li];
+    const si = srcImages.get(L);
+    if (!si || !si.bbox) return;
+    if (si.overlayDirty) rebuildOverlay(li);
+    if (!si.overlay) return;
+    const b = si.bbox;
+    ctx2.drawImage(si.overlay, b.x0, b.y0, b.x1 - b.x0 + 1, b.y1 - b.y0 + 1);
+  }
+  // 同步栅格化（仅导出使用）：把 原图⊕overlay 合并写入图层 Map（写满）；
+  // 导出完成后调用方应清空该图层 Map，恢复 overlay-only，避免大 Map 驻留内存。
+  function rasterizeSync(li) {
+    const L = state.layers[li];
+    const si = srcImages.get(L);
+    if (!si) return;
+    ensureBaseOf(L, si);
+    if (!si.base) return;
+    const map = L.pixels;
+    // 1) 基底全量写入（overlay 覆盖的格子会被第 2 步覆盖，因此先跳过已记录的 overlay key）
+    for (let i = 0; i < si.base.length; i += 4) {
+      const a = si.base[i + 3];
+      if (a === 0) continue; // 完全透明跳过
+      const px = i >> 2;
+      map.set((si.ox + (px % si.w)) + ',' + (si.oy + Math.floor(px / si.w)), rgbaToHex(si.base[i], si.base[i + 1], si.base[i + 2], a));
+    }
+    // 2) overlay 应用：覆盖色写入，null 挖洞删除
+    for (const [key, v] of L.pixels) {
+      if (v === null || v === undefined) map.delete(key);
+      else map.set(key, v);
+    }
+  }
+  // 图层当前是否以图片原图模式绘制（有 srcImage 且可见 → 恒为原图 + overlay 合成）
+  function layerUseImage(li) {
+    const L = state.layers[li];
+    if (!L || !L.visible) return false;
+    return !!srcImages.get(L);
+  }
+
   function render() {
     const w = cssW(), h = cssH(), p = dpr();
     if (w === 0 || h === 0) return;
@@ -414,18 +684,24 @@
     drawStampPreview(p);
     drawSelectionGrid(p);
     drawShapePreview(p);
-    drawVectorShapes(p);
     // 实例已并入 drawChunks 的图层循环（每层像素后画该层实例，上层覆盖下层）
     drawStatsPreview(p);
     drawNodeSelPreview(p);
     drawSelMovePreview(p);
+    drawVarMonitors(p); // 变量监控（node-system.js：「显示变量A」在画布/舞台上可视化变量）
   }
 
   function drawChunks(gx0, gx1, gy0, gy1, p) {
     const cx0 = gx0 >> 5, cx1 = gx1 >> 5, cy0 = gy0 >> 5, cy1 = gy1 >> 5;
+    // 缩小模式：可见块数爆炸（5% 缩放可达 80 万块）时切换为视图快照，每图层一次 drawImage
+    if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > SNAP_THRESHOLD) {
+      drawChunksSnapped(gx0, gx1, gy0, gy1, p);
+      return;
+    }
     const t0 = performance.now();
-    // 收集需要重建的块：活动图层优先，其次其他可见图层
+    // 收集需要重建的块：活动图层优先，其次其他可见图层（原图模式图层跳过块重建）
     const collect = function (li) {
+      if (layerUseImage(li)) return [];
       const out = [];
       const c = layerCache(li);
       for (let cy = cy0; cy <= cy1; cy++)
@@ -457,6 +733,17 @@
     ctx.imageSmoothingEnabled = state.scale < 1; // 放大时最近邻（像素清晰），缩小时平滑
     for (let li = 0; li < state.layers.length; li++) {
       if (!state.layers[li].visible) continue;
+      const si = srcImages.get(state.layers[li]);
+      if (layerUseImage(li) && si) {
+        // 图片 LOD：原图模式 —— 一次 drawImage 渲染整张图（GPU 平滑缩放）+ 编辑增量 overlay 合成
+        const wasSmooth = ctx.imageSmoothingEnabled;
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(si.img, si.ox, si.oy, si.w, si.h);
+        ctx.imageSmoothingEnabled = wasSmooth;
+        drawImageOverlay(ctx, li);
+        drawInstances(p, li);
+        continue;
+      }
       const c = layerCache(li);
       for (let cy = cy0; cy <= cy1; cy++)
         for (let cx = cx0; cx <= cx1; cx++) {
@@ -570,14 +857,22 @@
     }
   }
 
-  // 鼠标处的笔刷预览框
+  // 鼠标处的预览框：画笔/橡皮按笔刷大小显示框；其他工具（拖动/框选/封闭图形/直线/统计/拾色器）显示 1×1 格子框
   function drawStampPreview(p) {
     if (!state.mouseOnCanvas) return;
     const g = screenToGrid(state.mouseX, state.mouseY);
-    const t = currentStamp();
-    if (!t.data && t.mode === 'custom') return; // 自定义笔刷未创建
-    const b = stampBounds(g[0], g[1], t);
     const s = state.scale;
+    const t = state.tool;
+    const isBrushLike = t === 'brush' || t === 'eraser' || t === 'line';
+    let b;
+    if (isBrushLike) {
+      const st = currentStamp();
+      if (!st.data && st.mode === 'custom') return; // 自定义笔刷未创建
+      b = stampBounds(g[0], g[1], st);
+    } else {
+      // 非绘制笔刷类工具：只显示 1 格框
+      b = { x0: g[0], y0: g[1], x1: g[0], y1: g[1] };
+    }
     const x = b.x0 * s + state.offsetX, y = b.y0 * s + state.offsetY;
     const w = (b.x1 - b.x0 + 1) * s, h = (b.y1 - b.y0 + 1) * s;
     ctx.setTransform(p, 0, 0, p, 0, 0);
@@ -621,7 +916,7 @@
     if (!state.showColorInfo) { el.style.display = 'none'; return; }
     if (!state.mouseOnCanvas) { el.style.display = 'none'; return; }
     const g = screenToGrid(state.mouseX, state.mouseY);
-    const color = state.pixels.get(g[0] + ',' + g[1]);
+    const color = displayColor(state.layers[state.activeLayer], g[0], g[1]);
     const hex = color || '#00000000';
     // 颜色代码在前，网格坐标在后
     el.innerHTML = '<span class="sw" style="background:' + hex + '"></span>' +
@@ -637,50 +932,53 @@
   let spaceHeld = false;
   const pointers = new Map();
   let panState = null, drawState = null, pinchState = null, dragInst = null;
-  let vectorPath = null; // 矢量画笔进行中的路径：{ points: [[x,y],...] }
 
   function syncToolUI() {
     const t = state.tool;
-    els.btnBrush.classList.toggle('active', t === 'brush');
-    els.btnEraser.classList.toggle('active', t === 'eraser');
+    els.rToolBrush.classList.toggle('active', t === 'brush' || t === 'eraser');
+    els.rToolBrush.textContent = t === 'eraser' ? '🧹' : '🖌';
+    els.rToolBrush.title = t === 'eraser' ? '橡皮（左键使用，右键选择）' : '画笔（左键使用，右键选择）';
     els.settingsTool.value = t;
     els.btnOpenPicker.classList.toggle('active', t === 'picker');
-    const isShape = t === 'rect' || t === 'circle' || t === 'triangle';
+    const isShape = t === 'rect' || t === 'circle' || t === 'triangle' || t === 'fill';
     els.rToolShape.classList.toggle('active', isShape);
     // 封闭图形按钮显示当前选择的形状图标
     if (t === 'circle') els.rToolShape.textContent = '◯';
     else if (t === 'triangle') els.rToolShape.textContent = '△';
+    else if (t === 'fill') els.rToolShape.textContent = '🪣';
     else els.rToolShape.textContent = '▭';
-    els.rToolShape.title = '封闭图形：' +
-      (t === 'circle' ? '圆形' : t === 'triangle' ? '三角形' : '矩形') + '（点击展开选择）';
-    els.rToolFill.classList.toggle('active', t === 'fill');
-    els.rToolLine.classList.toggle('active', t === 'line');
+    els.rToolShape.title = '封闭图形（左键使用矩形，右键选择）：' +
+      (t === 'circle' ? '圆形' : t === 'triangle' ? '三角形' : t === 'fill' ? '填充' : '矩形');
     els.rToolMove.classList.toggle('active', t === 'move');
-    els.rToolSelect.classList.toggle('active', t === 'stats' || t === 'nodeSelect' || t === 'moveSel');
+    els.rToolSelect.classList.toggle('active', t === 'sel' || t === 'nodeSelect');
   }
   function syncModeUI() {
     els.settingsBrushMode.value = state.brushMode;
     els.settingsEraserMode.value = state.eraserMode;
+    els.bpBrushMode.value = state.brushMode;
+    els.bpEraserMode.value = state.eraserMode;
   }
   function syncSizeUI() {
-    const size = state.tool === 'eraser' ? state.eraserSize : state.brushSize;
-    els.sizeSlider.value = size;
-    els.sizeVal.textContent = size;
-    els.sizeField.childNodes[0].textContent = (state.tool === 'eraser' ? '橡皮大小 ' : '笔刷大小 ');
     els.settingsBrushSize.value = state.brushSize;
     els.settingsBrushSizeVal.textContent = state.brushSize;
     els.settingsEraserSize.value = state.eraserSize;
     els.settingsEraserSizeVal.textContent = state.eraserSize;
+    els.bpBrushSize.value = state.brushSize;
+    els.bpBrushSizeVal.textContent = state.brushSize;
+    els.bpEraserSize.value = state.eraserSize;
+    els.bpEraserSizeVal.textContent = state.eraserSize;
   }
   function syncColorInputs() {
-    els.colorPicker.value = state.color;
     els.settingsColor.value = state.color;
+    els.bpColor.value = state.color;
+    // 通知监听方（如调色板高亮）颜色已变化
+    document.dispatchEvent(new CustomEvent('colorchange'));
   }
 
   function setTool(t) {
     state.tool = t;
     // 切换工具时清除「框选移动」区域（move 手掌拖动 / moveSel 重新框选时保留）
-    if (t !== 'move' && t !== 'moveSel') { selMoveStart = null; selMoveEnd = null; dragSelMove = null; }
+    if (t !== 'move' && t !== 'sel') { selMoveStart = null; selMoveEnd = null; dragSelMove = null; }
     syncToolUI();
     syncSizeUI();
     // 若选中了“自定义”但尚未创建，打开画板
@@ -709,27 +1007,23 @@
   let selMoveStart = null, selMoveEnd = null; // 「框选移动」区域（格子坐标，常驻供手掌工具拖动）
   let dragSelMove = null; // 手掌拖动框选像素中
 
-  // 拾色器：拾取鼠标下方格子的颜色
+  // 拾色器：拾取鼠标下方格子的颜色（图片模式图层读取显示色 = 原图⊕overlay）
+  function ensureActiveRasterized() {
+    // 图片模式图层读操作无需栅格化：displayColor 会懒加载基底
+    return;
+  }
+
   function pickColor(gx, gy) {
-    if (state.vectorMode) {
-      // 矢量模式：优先命中矢量对象（从最上层往下取）
-      for (let i = state.vectorShapes.length - 1; i >= 0; i--) {
-        if (pointOnShape(gx, gy, state.vectorShapes[i])) {
-          state.color = state.vectorShapes[i].color;
-          syncColorInputs();
-          return;
-        }
-      }
-    }
-    const c = state.pixels.get(gx + ',' + gy);
+    const c = displayColor(state.layers[state.activeLayer], gx, gy);
     if (!c) return; // 空白格子不改变颜色
     state.color = c;
     syncColorInputs();
   }
 
-  // 封闭填充（flood fill）：点击填充同色连通区域
+  // 封闭填充（flood fill）：点击填充同色连通区域（基于显示色扩散，写入 overlay）
   function floodFill(gx, gy) {
-    const target = state.pixels.get(gx + ',' + gy);
+    const L = state.layers[state.activeLayer];
+    const target = displayColor(L, gx, gy);
     if (target === state.color) return;
     const stack = [[gx, gy]];
     const seen = new Set();
@@ -741,7 +1035,7 @@
       const key = x + ',' + y;
       if (seen.has(key)) continue;
       seen.add(key);
-      if (state.pixels.get(key) !== target) continue;
+      if (displayColor(L, x, y) !== target) continue;
       paintCellRaw(key, state.color);
       count++;
       stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
@@ -791,7 +1085,6 @@
 
   // 图形工具落笔（pointerup 时一次性绘制：仅轮廓，粗细 = 画笔大小）
   function commitShape() {
-    if (state.vectorMode) { commitVectorShape(); return; }
     const x0 = Math.min(shapeStart.x, shapeEnd.x), x1 = Math.max(shapeStart.x, shapeEnd.x);
     const y0 = Math.min(shapeStart.y, shapeEnd.y), y1 = Math.max(shapeStart.y, shapeEnd.y);
     beginStroke();
@@ -825,24 +1118,6 @@
 
   // 图形 / 统计预览（拖动过程中）
   function drawShapePreview(p) {
-    // 矢量画笔进行中的路径预览
-    if (vectorPath && vectorPath.points.length >= 2) {
-      const s = state.scale;
-      const X = function (gx) { return gx * s + state.offsetX; };
-      const Y = function (gy) { return gy * s + state.offsetY; };
-      ctx.setTransform(p, 0, 0, p, 0, 0);
-      ctx.strokeStyle = 'rgba(30, 120, 255, .6)';
-      ctx.lineWidth = Math.max(1, state.brushSize * s);
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(X(vectorPath.points[0][0]) + s / 2, Y(vectorPath.points[0][1]) + s / 2);
-      for (let k = 1; k < vectorPath.points.length; k++) {
-        ctx.lineTo(X(vectorPath.points[k][0]) + s / 2, Y(vectorPath.points[k][1]) + s / 2);
-      }
-      ctx.stroke();
-      return;
-    }
     if (!shapeStart || !shapeEnd) return;
     const s = state.scale;
     const X = function (gx) { return gx * s + state.offsetX; };
@@ -924,16 +1199,17 @@
     ctx.setLineDash([]);
   }
 
-  // 图像统计：矩形框选 / Shift+拖动 直线统计
+  // 图像统计：矩形框选 / Shift+拖动 直线统计（基于显示色）
   function computeStats() {
     const isLine = statsShift;
     const x0 = Math.min(statsStart.x, statsEnd.x), x1 = Math.max(statsStart.x, statsEnd.x);
     const y0 = Math.min(statsStart.y, statsEnd.y), y1 = Math.max(statsStart.y, statsEnd.y);
     const counts = new Map();
     let total = 0, empty = 0;
+    const L = state.layers[state.activeLayer];
     const addCell = function (x, y) {
       total++;
-      const c = state.pixels.get(x + ',' + y);
+      const c = displayColor(L, x, y);
       if (c) counts.set(c, (counts.get(c) || 0) + 1);
       else empty++;
     };
@@ -949,11 +1225,15 @@
       total: total, empty: empty, counts: counts,
     };
     renderStatsPanel();
-    els.statsPanel.classList.add('open');
+    openSelectPanel();
   }
   function renderStatsPanel() {
     const st = state.stats;
     if (!st) return;
+    if (els.selInfo) {
+      els.selInfo.textContent = '范围 (' + st.x0 + ', ' + st.y0 + ') ~ (' + st.x1 + ', ' + st.y1 + ')' +
+        (st.mode === 'rect' ? ' · ' + (st.x1 - st.x0 + 1) + ' × ' + (st.y1 - st.y0 + 1) + ' 像素' : '（直线）');
+    }
     const sorted = Array.from(st.counts.entries()).sort(function (a, b) { return b[1] - a[1]; });
     let html = '<div>方式：' + (st.mode === 'line' ? '直线统计' : '矩形框选') + '</div>';
     html += '<div>范围：(' + st.x0 + ', ' + st.y0 + ') ~ (' + st.x1 + ', ' + st.y1 + ')' +
@@ -966,7 +1246,161 @@
         c + ' × ' + n + '（' + pct + '%）</div>';
     }
     els.statsBody.innerHTML = html;
+    if (els.selStats) {
+      els.selStats.textContent = '像素 ' + st.total + '（空白 ' + st.empty + '）· 颜色 ' + sorted.length + ' 种';
+    }
   }
+
+  // ---------- 框选控制栏（统一框选工具：缩放 / 统计 / RotSprite 旋转 / 移动） ----------
+  function selRect() {
+    if (!selMoveStart || !selMoveEnd) return null;
+    return {
+      x0: Math.min(selMoveStart.x, selMoveEnd.x), y0: Math.min(selMoveStart.y, selMoveEnd.y),
+      x1: Math.max(selMoveStart.x, selMoveEnd.x), y1: Math.max(selMoveStart.y, selMoveEnd.y),
+    };
+  }
+  function openSelectPanel() {
+    const r = selRect();
+    if (!r) return;
+    const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
+    els.selW.value = w;
+    els.selH.value = h;
+    if (els.selInfo) els.selInfo.textContent = '范围 (' + r.x0 + ', ' + r.y0 + ') ~ (' + r.x1 + ', ' + r.y1 + ') · ' + w + ' × ' + h + ' 像素';
+    els.selectPanel.classList.add('open');
+  }
+  // 图像统计：点击按钮后统计当前框选区域
+  function doSelStats() {
+    const r = selRect();
+    if (!r) { alert('请先在画布上框选一片区域'); return; }
+    // 开关：已统计且导出按钮可见 → 再点一次隐藏
+    if (els.selExportRow && els.selExportRow.style.display !== 'none') {
+      state.stats = null;
+      els.statsBody.innerHTML = '';
+      els.selStats.textContent = '';
+      els.selExportRow.style.display = 'none';
+      return;
+    }
+    statsStart = { x: r.x0, y: r.y0 }; statsEnd = { x: r.x1, y: r.y1 }; statsShift = false;
+    computeStats();
+    if (els.selExportRow) els.selExportRow.style.display = '';
+    els.selectPanel.classList.add('open');
+  }
+  function clearSel() {
+    selMoveStart = null; selMoveEnd = null; dragSelMove = null;
+    state.stats = null;
+    if (els.selExportRow) els.selExportRow.style.display = 'none';
+    if (els.selectPanel) els.selectPanel.classList.remove('open');
+    requestRender();
+  }
+  // 读取框选区域像素（2D 数组，空 = null；基于显示色 = 原图⊕overlay）
+  function readSelPixels(r) {
+    const L = state.layers[state.activeLayer];
+    const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
+    const src = [];
+    for (let y = 0; y < h; y++) {
+      const row = [];
+      for (let x = 0; x < w; x++) row.push(displayColor(L, r.x0 + x, r.y0 + y) || null);
+      src.push(row);
+    }
+    return src;
+  }
+  // 最近邻缩放框选内容到新尺寸（保持像素锐利）
+  function applySelScale() {
+    const r = selRect();
+    if (!r) { alert('请先在画布上框选一片区域'); return; }
+    const nw = Math.round(+els.selW.value), nh = Math.round(+els.selH.value);
+    if (!nw || !nh || nw < 1 || nh < 1 || nw > 4096 || nh > 4096) { alert('宽度/长度需为 1-4096 的整数'); return; }
+    const src = readSelPixels(r);
+    const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
+    if (nw === w && nh === h) return;
+    const L = state.layers[state.activeLayer];
+    beginStroke();
+    // 清空原框选区域（图片模式 = 挖洞，普通图层 = 删除）
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const key = (r.x0 + x) + ',' + (r.y0 + y);
+      if (displayColor(L, r.x0 + x, r.y0 + y)) paintCellRaw(key, null);
+    }
+    // 中心对齐
+    const cx = r.x0 + Math.floor(w / 2), cy = r.y0 + Math.floor(h / 2);
+    const nx0 = cx - Math.floor(nw / 2), ny0 = cy - Math.floor(nh / 2);
+    for (let ty = 0; ty < nh; ty++) {
+      const sy = Math.min(h - 1, Math.floor(ty * h / nh));
+      for (let tx = 0; tx < nw; tx++) {
+        const sx = Math.min(w - 1, Math.floor(tx * w / nw));
+        const c = src[sy][sx];
+        if (c) paintCellRaw((nx0 + tx) + ',' + (ny0 + ty), c);
+      }
+    }
+    endStroke();
+    selMoveStart = { x: nx0, y: ny0 }; selMoveEnd = { x: nx0 + nw - 1, y: ny0 + nh - 1 };
+    markDirtyRect(Math.min(r.x0, nx0), Math.min(r.y0, ny0), Math.max(r.x1, nx0 + nw - 1), Math.max(r.y1, ny0 + nh - 1), state.activeLayer);
+    requestRender();
+    openSelectPanel();
+  }
+  // RotSprite 旋转：先放大 4 倍 → 旋转 → 面积平均缩小，最大程度保留像素边缘
+  function applySelRotate() {
+    const r = selRect();
+    if (!r) { alert('请先在画布上框选一片区域'); return; }
+    const angle = parseFloat(els.selAngle.value) || 0;
+    if (angle % 360 === 0) return;
+    const rad = angle * Math.PI / 180;
+    const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
+    const src = readSelPixels(r);
+    const L = state.layers[state.activeLayer];
+    // 1. 放大 UP 倍（最近邻）
+    const UP = 4;
+    const UW = w * UP, UH = h * UP;
+    const up = document.createElement('canvas'); up.width = UW; up.height = UH;
+    const uc = up.getContext('2d');
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const c = src[y][x];
+      if (c) { uc.fillStyle = c; uc.fillRect(x * UP, y * UP, UP, UP); }
+    }
+    // 2. 旋转（平滑插值）
+    const ca = Math.abs(Math.cos(rad)), sa = Math.abs(Math.sin(rad));
+    const BW = Math.max(1, Math.ceil(UW * ca + UH * sa));
+    const BH = Math.max(1, Math.ceil(UW * sa + UH * ca));
+    const rot = document.createElement('canvas'); rot.width = BW; rot.height = BH;
+    const rc = rot.getContext('2d');
+    rc.translate(BW / 2, BH / 2);
+    rc.rotate(rad);
+    rc.drawImage(up, -UW / 2, -UH / 2);
+    const img = rc.getImageData(0, 0, BW, BH);
+    // 3. 缩小：目标像素 = 旋转大图中 UP×UP 区域面积平均（RotSprite 关键）
+    const TW = Math.max(1, Math.ceil(BW / UP)), TH = Math.max(1, Math.ceil(BH / UP));
+    const out = [];
+    for (let ty = 0; ty < TH; ty++) {
+      const row = [];
+      for (let tx = 0; tx < TW; tx++) {
+        let rr = 0, gg = 0, bb = 0, n = 0;
+        for (let yy = ty * UP; yy < Math.min((ty + 1) * UP, BH); yy++)
+          for (let xx = tx * UP; xx < Math.min((tx + 1) * UP, BW); xx++) {
+            const i = (yy * BW + xx) * 4;
+            if (img.data[i + 3] > 0) { rr += img.data[i]; gg += img.data[i + 1]; bb += img.data[i + 2]; n++; }
+          }
+        row.push(n ? '#' + [rr, gg, bb].map(function (v) { return Math.round(v / n).toString(16).padStart(2, '0'); }).join('') : null);
+      }
+      out.push(row);
+    }
+    // 4. 写入：清空原框选区域（图片模式 = 挖洞），结果以原框选中心对齐
+    beginStroke();
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const key = (r.x0 + x) + ',' + (r.y0 + y);
+      if (displayColor(L, r.x0 + x, r.y0 + y)) paintCellRaw(key, null);
+    }
+    const cx = r.x0 + Math.floor(w / 2), cy = r.y0 + Math.floor(h / 2);
+    const nx0 = cx - Math.floor(TW / 2), ny0 = cy - Math.floor(TH / 2);
+    for (let ty = 0; ty < TH; ty++) for (let tx = 0; tx < TW; tx++) {
+      const c = out[ty][tx];
+      if (c) paintCellRaw((nx0 + tx) + ',' + (ny0 + ty), c);
+    }
+    endStroke();
+    selMoveStart = { x: nx0, y: ny0 }; selMoveEnd = { x: nx0 + TW - 1, y: ny0 + TH - 1 };
+    markDirtyRect(Math.min(r.x0, nx0), Math.min(r.y0, ny0), Math.max(r.x1, nx0 + TW - 1), Math.max(r.y1, ny0 + TH - 1), state.activeLayer);
+    requestRender();
+    openSelectPanel();
+  }
+
   function buildStatsCSV() {
     const st = state.stats;
     const b = bounds();
@@ -1001,22 +1435,31 @@
 
   canvas.addEventListener('pointerdown', function (e) {
     canvas.focus();
-    canvas.setPointerCapture(e.pointerId);
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* 未激活指针（测试等）时忽略 */ }
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType, button: e.button });
     e.preventDefault();
 
-    // 手掌工具：先命中「框选移动」区域（整片像素拖动），未命中再走实例逻辑
+    // 手掌工具 / 框选工具：先命中「框选」区域（整片像素拖动），未命中再走实例逻辑
     const g = screenToGrid(e.clientX, e.clientY);
-    if (state.tool === 'move' && selMoveStart && selMoveEnd) {
+    if ((state.tool === 'move' || state.tool === 'sel') && e.button === 0 && selMoveStart && selMoveEnd) { // 仅左键：框选区域拖动/重框选（中键/右键不触发）
       const sr = {
         x0: Math.min(selMoveStart.x, selMoveEnd.x), y0: Math.min(selMoveStart.y, selMoveEnd.y),
         x1: Math.max(selMoveStart.x, selMoveEnd.x), y1: Math.max(selMoveStart.y, selMoveEnd.y),
       };
-      if (g[0] >= sr.x0 && g[0] <= sr.x1 && g[1] >= sr.y0 && g[1] <= sr.y1) {
+      const inside = g[0] >= sr.x0 && g[0] <= sr.x1 && g[1] >= sr.y0 && g[1] <= sr.y1;
+      if (inside) {
         dragSelMove = {
           x0: sr.x0, y0: sr.y0, w: sr.x1 - sr.x0 + 1, h: sr.y1 - sr.y0 + 1,
           dx: g[0] - sr.x0, dy: g[1] - sr.y0, lastX: sr.x0, lastY: sr.y0,
         };
+        return;
+      }
+      if (state.tool === 'sel') {
+        // 框外点击：重新框选（替换旧框选）
+        selMoveStart = { x: g[0], y: g[1] }; selMoveEnd = { x: g[0], y: g[1] };
+        statsShift = e.shiftKey;
+        drawState = e.shiftKey ? { stats: true } : { selMove: true };
+        requestRender();
         return;
       }
     }
@@ -1033,7 +1476,7 @@
 
     if (pointers.size === 2) {
       drawState = null; panState = null; shapeStart = null; shapeEnd = null;
-      statsStart = null; statsEnd = null; nodeSelStart = null; nodeSelEnd = null; vectorPath = null;
+      statsStart = null; statsEnd = null; nodeSelStart = null; nodeSelEnd = null;
       if (currentStroke) currentStroke = null; // 取消未完成的笔画记录
       const it = pointers.values();
       const p1 = it.next().value, p2 = it.next().value;
@@ -1048,7 +1491,7 @@
 
     const p = pointers.get(e.pointerId);
     const isMouse = p.type === 'mouse';
-    if (isMouse && (p.button === 2 || p.button === 1)) {
+    if (isMouse && p.button === 2) { // 仅右键：拖动画布（中键无功能，左键按工具框选/绘制）
       panState = { startX: p.x, startY: p.y, ox: state.offsetX, oy: state.offsetY };
       canvas.classList.add('panning');
     } else if (isMouse && p.button === 0 && spaceHeld) {
@@ -1063,19 +1506,11 @@
         return;
       }
       if (tool === 'brush' || tool === 'eraser') {
-        if (tool === 'brush' && state.vectorMode) {
-          // 矢量画笔：记录自由路径（折线）
-          vectorPath = { points: [[g[0], g[1]]] };
-          drawState = { gx: g[0], gy: g[1], t: 'vpath' };
-          fastMode = true;
-          updateUI();
-        } else {
-          beginStroke();
-          paintStampAt(g[0], g[1], t);
-          drawState = { gx: g[0], gy: g[1], t: t };
-          fastMode = true;
-          updateUI(); // 绘图时自动隐藏工具栏和提示
-        }
+        beginStroke();
+        paintStampAt(g[0], g[1], t);
+        drawState = { gx: g[0], gy: g[1], t: t };
+        fastMode = true;
+        updateUI(); // 绘图时自动隐藏工具栏和提示
       } else if (tool === 'picker') {
         pickColor(g[0], g[1]);
       } else if (tool === 'fill') {
@@ -1086,19 +1521,21 @@
         drawState = { shape: true };
         fastMode = true;
         updateUI();
-      } else if (tool === 'stats') {
-        statsStart = { x: g[0], y: g[1] };
-        statsEnd = { x: g[0], y: g[1] };
-        statsShift = e.shiftKey;
-        drawState = { stats: true };
+      } else if (tool === 'sel') {
+        if (e.shiftKey) {
+          statsStart = { x: g[0], y: g[1] };
+          statsEnd = { x: g[0], y: g[1] };
+          statsShift = true;
+          drawState = { stats: true };
+        } else {
+          selMoveStart = { x: g[0], y: g[1] };
+          selMoveEnd = { x: g[0], y: g[1] };
+          drawState = { selMove: true };
+        }
       } else if (tool === 'nodeSelect') {
         nodeSelStart = { x: g[0], y: g[1] };
         nodeSelEnd = { x: g[0], y: g[1] };
         drawState = { nodeSel: true };
-      } else if (tool === 'moveSel') {
-        selMoveStart = { x: g[0], y: g[1] };
-        selMoveEnd = { x: g[0], y: g[1] };
-        drawState = { selMove: true };
       }
       requestRender();
     }
@@ -1120,19 +1557,21 @@
         const L = state.layers[state.activeLayer];
         // 标记旧区域脏（分块缓存），否则屏幕仍显示旧缓存块
         markDirtyRect(dragSelMove.x0, dragSelMove.y0, dragSelMove.x0 + dragSelMove.w - 1, dragSelMove.y0 + dragSelMove.h - 1, state.activeLayer);
+        // 读取显示色（图片模式 = 原图⊕overlay）
         const cells = [];
         for (let yy = 0; yy < dragSelMove.h; yy++)
           for (let xx = 0; xx < dragSelMove.w; xx++) {
-            const c = L.pixels.get((dragSelMove.x0 + xx) + ',' + (dragSelMove.y0 + yy));
+            const c = displayColor(L, dragSelMove.x0 + xx, dragSelMove.y0 + yy);
             if (c) cells.push(xx + ',' + yy + ':' + c);
           }
+        // 清除原区域（图片模式 = 挖洞），写入新位置（不记录撤销，与原行为一致）
         for (let yy = 0; yy < dragSelMove.h; yy++)
           for (let xx = 0; xx < dragSelMove.w; xx++)
-            L.pixels.delete((dragSelMove.x0 + xx) + ',' + (dragSelMove.y0 + yy));
+            paintCellRaw((dragSelMove.x0 + xx) + ',' + (dragSelMove.y0 + yy), null);
         for (const s of cells) {
           const i = s.indexOf(':'); const k = s.slice(0, i); const c = s.slice(i + 1);
           const j = k.indexOf(','); const xx = +k.slice(0, j), yy = +k.slice(j + 1);
-          L.pixels.set((nx + xx) + ',' + (ny + yy), c);
+          paintCellRaw((nx + xx) + ',' + (ny + yy), c);
         }
         dragSelMove.x0 = nx; dragSelMove.y0 = ny; dragSelMove.lastX = nx; dragSelMove.lastY = ny;
         selMoveStart = { x: nx, y: ny }; selMoveEnd = { x: nx + dragSelMove.w - 1, y: ny + dragSelMove.h - 1 };
@@ -1184,11 +1623,7 @@
         selMoveEnd = { x: g[0], y: g[1] };
         requestRender();
       } else if (g[0] !== drawState.gx || g[1] !== drawState.gy) {
-        if (drawState.t === 'vpath') {
-          vectorPath.points.push([g[0], g[1]]); // 矢量画笔：追加路径点
-        } else {
-          linePaint(drawState.gx, drawState.gy, g[0], g[1], drawState.t);
-        }
+        linePaint(drawState.gx, drawState.gy, g[0], g[1], drawState.t);
         drawState.gx = g[0]; drawState.gy = g[1];
         requestRender();
       }
@@ -1210,10 +1645,11 @@
         if (drawState.shape) commitShape();
         else if (drawState.stats) computeStats();
         else if (drawState.nodeSel) commitNodeSelect();
-        else if (drawState.selMove) { /* 框选结束：保留区域供手掌工具拖动 */ }
-        else if (drawState.t === 'vpath') commitVectorPath();
+        else if (drawState.selMove) { openSelectPanel(); }
         else endStroke();
         drawState = null;
+      } else if (selMoveStart && selMoveEnd) {
+        openSelectPanel(); // 框选内容拖动结束 → 刷新控制栏
       }
       shapeStart = null; shapeEnd = null;
       statsStart = null; statsEnd = null;
@@ -1242,6 +1678,8 @@
     if (e.code === 'Space') { spaceHeld = true; e.preventDefault(); canvas.classList.add('space'); }
     // 撤销 / 重做（不受弹窗影响，但弹窗中避免误触输入框）
     const tag = (e.target && e.target.tagName) || '';
+    // 节点编辑器打开时，Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y 交给节点画布的撤销/重做，不碰像素撤销
+    if (window.__nodeEditorOpen) return;
     if (tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA') {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -1269,19 +1707,32 @@
   });
 
   // ---------- 工具栏 ----------
-  els.btnBrush.addEventListener('click', function () { setTool('brush'); });
-  els.btnEraser.addEventListener('click', function () { setTool('eraser'); });
-
-  els.sizeSlider.addEventListener('input', function () {
-    const v = +els.sizeSlider.value;
-    if (state.tool === 'eraser') state.eraserSize = v; else state.brushSize = v;
+  // 画笔/橡皮设置面板内容绑定（面板打开逻辑在 vector-canvas.js 的 openBrushPanel：
+  // 右键画笔按钮 → 展开选择栏 → 右键选择栏中的「画笔/橡皮」→ 打开此面板）
+  els.bpBrushMode.addEventListener('change', function () { setBrushMode(els.bpBrushMode.value); });
+  els.bpEraserMode.addEventListener('change', function () { setEraserMode(els.bpEraserMode.value); });
+  els.bpBrushSize.addEventListener('input', function () {
+    state.brushSize = +els.bpBrushSize.value;
     syncSizeUI();
     requestRender();
   });
-
-  els.colorPicker.addEventListener('input', function () {
-    state.color = els.colorPicker.value;
+  els.bpEraserSize.addEventListener('input', function () {
+    state.eraserSize = +els.bpEraserSize.value;
+    syncSizeUI();
+    requestRender();
+  });
+  els.bpColor.addEventListener('input', function () {
+    state.color = els.bpColor.value;
     syncColorInputs();
+  });
+  // 点击面板外 / 滚轮 → 关闭控制栏
+  document.addEventListener('click', function (e) {
+    if (els.brushPanel && els.brushPanel.style.display === 'block' && !els.brushPanel.contains(e.target) && e.target !== els.rToolBrush) {
+      els.brushPanel.style.display = 'none';
+    }
+  });
+  document.addEventListener('wheel', function () {
+    if (els.brushPanel) els.brushPanel.style.display = 'none';
   });
 
   // 手动隐藏 / 显示界面（工具栏按钮 + 设置面板按钮 + 恢复按钮）
@@ -1299,7 +1750,11 @@
 
 
   // 统计面板
-  els.btnCloseStats.addEventListener('click', function () { els.statsPanel.classList.remove('open'); });
+  els.btnCloseSelect.addEventListener('click', function () { els.selectPanel.classList.remove('open'); });
+  els.btnSelClear.addEventListener('click', clearSel);
+  els.btnSelScale.addEventListener('click', applySelScale);
+  els.btnSelRotate.addEventListener('click', applySelRotate);
+  els.btnSelStats.addEventListener('click', doSelStats);
   els.btnStatsCsv.addEventListener('click', exportStatsCSV);
   els.btnStatsPngCsv.addEventListener('click', exportStatsPNGCSV);
 
@@ -1312,6 +1767,15 @@
   });
   els.settingsMask.addEventListener('click', function (e) {
     if (e.target === els.settingsMask) els.settingsMask.classList.remove('open');
+  });
+  // 手动保存设置按钮
+  const btnSaveSettings = document.getElementById('btnSaveSettings');
+  if (btnSaveSettings) btnSaveSettings.addEventListener('click', function () {
+    saveSettings();
+    const btn = btnSaveSettings;
+    const old = btn.textContent;
+    btn.textContent = '✅ 已保存';
+    setTimeout(function () { btn.textContent = old; }, 2000);
   });
 
   // 设置面板：工具（下拉选择全部工具）
@@ -1386,6 +1850,10 @@
     state.exportFormat = els.settingsExportFormat.value;
     updateExportFormatUI();
   });
+  // 导出图片格式（设置面板）
+  els.settingsExportImageFormat.addEventListener('change', function () {
+    state.exportImageFormat = els.settingsExportImageFormat.value;
+  });
 
   els.btnReset.addEventListener('click', function () {
     state.scale = 1;
@@ -1399,6 +1867,7 @@
     if (!hasContent() && state.instances.length === 0) return;
     if (confirm('确定要清空所有图层的像素与矢量对象吗？\n（画布上的实例也会一并清除）')) {
       for (const L of state.layers) { L.pixels.clear(); L.shapes.length = 0; }
+      srcImages.clear(); // 图片 LOD：原图模式一并清除
       for (let i = 0; i < layerChunks.length; i++) {
         if (layerChunks[i]) { layerChunks[i].map.clear(); layerChunks[i].dirty.clear(); }
       }
@@ -1473,7 +1942,8 @@
 
   function openModal(target) {
     modalEditing = target;
-    els.modalTitle.textContent = target === 'eraser' ? '自定义橡皮（图案 = 擦除形状）' : '自定义笔刷';
+    const curBrush0 = target === 'eraser' ? customEraser : customBrush;
+    els.modalTitle.textContent = (target === 'eraser' ? '自定义橡皮' : '自定义笔刷') + (curBrush0 && curBrush0.name ? '：' + curBrush0.name : '（图案 = ' + (target === 'eraser' ? '擦除形状' : '绘制形状') + '）');
     const src = target === 'eraser' ? customEraser : customBrush;
     if (src) {
       modal.n = src.w;
@@ -1717,13 +2187,209 @@
     renderModal();
   });
 
+  // ---------- 设置持久化（localStorage 保存用户设置，刷新后自动恢复） ----------
+  const SETTINGS_KEY = 'grid-settings';
+  const SETTINGS_FIELDS = [
+    'tool', 'brushMode', 'eraserMode', 'brushSize', 'eraserSize', 'color',
+    'showColorInfo', 'showGrid', 'gridStep', 'showAxis', 'axisLabelSize', 'axisLabelAuto',
+    'exportFormat', 'exportImageFormat', 'compressLevel', 'maxUndoSteps',
+  ];
+  function saveSettings() {
+    const obj = {};
+    for (const k of SETTINGS_FIELDS) obj[k] = state[k];
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(obj)); } catch (e) { /* 存储满忽略 */ }
+  }
+  function loadSettings() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY)); } catch (e) { s = null; }
+    if (!s || typeof s !== 'object') return;
+    for (const k of SETTINGS_FIELDS) {
+      if (s[k] === undefined) continue;
+      if (k === 'gridStep') state.gridStep = (s[k] === 'auto') ? 'auto' : +s[k];
+      else state[k] = s[k];
+    }
+  }
+
+  // ---------- 笔刷库（localStorage 持久化） ----------
+  const BRUSH_LIB_KEY = 'grid-brush-library';
+  function loadBrushLib() {
+    try { return JSON.parse(localStorage.getItem(BRUSH_LIB_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function saveBrushLib(arr) {
+    try { localStorage.setItem(BRUSH_LIB_KEY, JSON.stringify(arr)); } catch (e) { /* 存储满时忽略 */ }
+  }
+  function brushToStore(obj, kind) {
+    return {
+      kind: kind || 'brush', name: obj.name || '笔刷', w: obj.w, h: obj.h,
+      pixels: Array.from(obj.pixels, function (kv) {
+        const i = kv[0].indexOf(',');
+        return [+kv[0].slice(0, i), +kv[0].slice(i + 1), kv[1]];
+      }),
+      time: Date.now(),
+    };
+  }
+  function brushFromStore(s) {
+    const px = new Map();
+    for (const it of (s.pixels || [])) px.set(it[0] + ',' + it[1], it[2]);
+    return { name: s.name, w: s.w, h: s.h, pixels: px };
+  }
+  function addToBrushLib(obj, kind) {
+    const arr = loadBrushLib();
+    const st = brushToStore(obj, kind);
+    arr.unshift(st);
+    if (arr.length > 200) arr.length = 200;
+    saveBrushLib(arr);
+    renderBrushLib();
+    return st; // 返回 store（含 time），用于把当前笔刷与库项关联
+  }
+  // 设置面板下拉「自定义笔刷/自定义橡皮」选项文字 = 当前自定义笔刷的名字
+  function updateCustomBrushLabels() {
+    const sel = els.settingsBrushMode;
+    if (sel) {
+      const opt = sel.querySelector('option[value=\"custom\"]');
+      if (opt) opt.textContent = customBrush ? (customBrush.name || '自定义笔刷') : '自定义笔刷';
+    }
+    const selE = els.settingsEraserMode;
+    if (selE) {
+      const optE = selE.querySelector('option[value=\"custom\"]');
+      if (optE) optE.textContent = customEraser ? (customEraser.name || '自定义橡皮') : '自定义橡皮';
+    }
+  }
+  function renderBrushLib() {
+    const list = els.brushLibraryList;
+    if (!list) return;
+    const kind = modalEditing || 'brush';
+    const isEr = kind === 'eraser';
+    // 标题按画板类型区分（橡皮画板显示橡皮库，画笔画板显示笔刷库）
+    const head = document.querySelector('#brushLibrary .bl-head span');
+    if (head) {
+      head.childNodes[0].textContent = isEr ? '📚 橡皮库 ' : '📚 笔刷库 ';
+    }
+    const arr = loadBrushLib().filter(function (x) { return (x.kind || 'brush') === kind; });
+    list.innerHTML = '';
+    if (!arr.length) {
+      list.innerHTML = '<div class="bl-empty">暂无' + (isEr ? '橡皮' : '笔刷') + '：保存或导入后自动出现在这里</div>';
+      return;
+    }
+    for (const s of arr) {
+      const item = document.createElement('div');
+      item.className = 'bl-item';
+      item.title = '点击设为当前笔刷';
+      const t = new Date(s.time || Date.now());
+      const nm = document.createElement('span');
+      nm.className = 'bl-name';
+      nm.textContent = s.name || '笔刷';
+      const meta = document.createElement('span');
+      meta.className = 'bl-meta';
+      meta.textContent = s.w + '×' + s.h + ' · ' + t.toLocaleDateString();
+      // 右上角删除按钮
+      const del = document.createElement('span');
+      del.className = 'bl-del';
+      del.textContent = '×';
+      del.title = '删除该笔刷';
+      del.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        const cur = loadBrushLib();
+        // indexOf 引用比较会失败（重新解析是新对象），用 time+name 匹配
+        const idx = cur.findIndex(function (x) { return x.time === s.time && x.name === s.name && x.w === s.w && x.h === s.h; });
+        if (idx >= 0) cur.splice(idx, 1);
+        saveBrushLib(cur);
+        renderBrushLib();
+      });
+      item.appendChild(del);
+      item.appendChild(nm);
+      item.appendChild(meta);
+      // 右键重命名
+      item.addEventListener('contextmenu', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const nn = prompt('重命名笔刷「' + (s.name || '') + '」：', s.name || '');
+        if (nn === null || nn.trim() === '') return;
+        const cur = loadBrushLib();
+        const idx = cur.findIndex(function (x) { return x.time === s.time && x.name === s.name && x.w === s.w && x.h === s.h; });
+        if (idx >= 0) {
+          cur[idx].name = nn.trim(); saveBrushLib(cur); renderBrushLib();
+          // 若重命名的就是当前自定义笔刷，同步名称与设置面板标签
+          if (customBrush && customBrush.__libTime === s.time) customBrush.name = nn.trim();
+          if (customEraser && customEraser.__libTime === s.time) customEraser.name = nn.trim();
+          updateCustomBrushLabels();
+        }
+      });
+      item.addEventListener('click', function () {
+        const obj = brushFromStore(s);
+        if (s.kind === 'eraser') { customEraser = obj; setEraserMode('custom'); }
+        else { customBrush = obj; setBrushMode('custom'); }
+        if (s.kind === 'eraser') customEraser.__libTime = s.time; else customBrush.__libTime = s.time;
+        updateCustomBrushLabels();
+        els.modalTitle.textContent = (s.kind === 'eraser' ? '自定义橡皮' : '自定义笔刷') + '：' + (s.name || '');
+        // 同时载入画板，便于继续编辑
+        modal.n = obj.w;
+        modal.pixels = new Map(obj.pixels);
+        els.modalSizeSelect.value = String(obj.w);
+        resizeModalCanvas();
+        renderModal();
+        requestRender();
+        alert('已设为当前' + (s.kind === 'eraser' ? '橡皮' : '笔刷') + '：' + (s.name || ''));
+      });
+      list.appendChild(item);
+    }
+  }
+  els.modalBtnLibrary.addEventListener('click', function () {
+    const lib = els.brushLibrary;
+    lib.style.display = lib.style.display === 'none' ? 'block' : 'none';
+    if (lib.style.display === 'block') renderBrushLib();
+  });
+  const blClose = document.querySelector('#brushLibrary .bl-close');
+  if (blClose) blClose.addEventListener('click', function () {
+    els.brushLibrary.style.display = 'none';
+  });
+
   els.modalBtnSave.addEventListener('click', function () {
-    const obj = { name: modalEditing === 'eraser' ? '自定义橡皮' : '自定义笔刷', w: modal.n, h: modal.n, pixels: new Map(modal.pixels) };
-    if (modalEditing === 'eraser') { customEraser = obj; setEraserMode('custom'); }
+    const isEr = modalEditing === 'eraser';
+    const curBrush = isEr ? customEraser : customBrush;
+    // 从笔刷库加载过的笔刷：询问覆盖 or 另存为新笔刷
+    if (curBrush && curBrush.__libTime) {
+      const over = confirm('已从笔刷库加载「' + (curBrush.name || '') + '」：\n确定 = 覆盖此笔刷\n取消 = 另存为新笔刷');
+      if (over) {
+        // 覆盖：更新库中该条目（保持名称）
+        const cur = loadBrushLib();
+        const idx = cur.findIndex(function (x) { return x.time === curBrush.__libTime; });
+        if (idx >= 0) {
+          cur[idx].w = modal.n; cur[idx].h = modal.n;
+          cur[idx].pixels = Array.from(modal.pixels, function (kv) { const i = kv[0].indexOf(','); return [+kv[0].slice(0, i), +kv[0].slice(i + 1), kv[1]]; });
+          saveBrushLib(cur); renderBrushLib();
+        }
+        const obj = { name: curBrush.name || '自定义笔刷', w: modal.n, h: modal.n, pixels: new Map(modal.pixels), __libTime: curBrush.__libTime };
+        if (isEr) { customEraser = obj; setEraserMode('custom'); }
+        else { customBrush = obj; setBrushMode('custom'); }
+        updateCustomBrushLabels();
+        requestRender();
+        alert('已覆盖笔刷「' + obj.name + '」（画板保持打开）。');
+        return;
+      }
+      // 另存为新笔刷：输入名称
+      const nn = prompt('保存为新笔刷，输入名称：', (curBrush.name || '笔刷') + ' 副本');
+      if (nn === null || nn.trim() === '') { alert('已取消保存。'); return; }
+      const obj2 = { name: nn.trim(), w: modal.n, h: modal.n, pixels: new Map(modal.pixels) };
+      if (isEr) { customEraser = obj2; setEraserMode('custom'); }
+      else { customBrush = obj2; setBrushMode('custom'); }
+      const libSt2 = addToBrushLib(obj2, modalEditing);
+      if (isEr) customEraser.__libTime = libSt2.time; else customBrush.__libTime = libSt2.time;
+      updateCustomBrushLabels();
+      requestRender();
+      alert('已保存为新笔刷「' + obj2.name + '」（画板保持打开）。');
+      return;
+    }
+    // 新笔刷：直接保存并入库
+    const obj = { name: isEr ? '自定义橡皮' : '自定义笔刷', w: modal.n, h: modal.n, pixels: new Map(modal.pixels) };
+    if (isEr) { customEraser = obj; setEraserMode('custom'); }
     else { customBrush = obj; setBrushMode('custom'); }
-    closeModal();
+    const libSt = addToBrushLib(obj, modalEditing); // 保存的笔刷自动入库
+    if (isEr) { if (customEraser) customEraser.__libTime = libSt.time; }
+    else { if (customBrush) customBrush.__libTime = libSt.time; }
+    updateCustomBrushLabels();
     requestRender();
-    alert('已保存为当前' + (modalEditing === 'eraser' ? '橡皮。' : '笔刷。'));
+    alert('已保存为当前' + (isEr ? '橡皮（画板保持打开，可继续绘制）。' : '笔刷（画板保持打开，可继续绘制）。'));
   });
 
   els.btnCloseModal.addEventListener('click', closeModal);
@@ -1782,7 +2448,8 @@
         els.modalSizeSelect.value = String(w);
         resizeModalCanvas();
         renderModal();
-        alert('笔刷已载入画板，点击「保存为当前笔刷」生效。');
+        addToBrushLib({ name: d.name || '导入笔刷', w: w, h: h, pixels: px }, modalEditing); // 导入的笔刷自动入库
+        alert('笔刷已载入画板，点击「保存」生效。');
       } catch (err) { alert('导入笔刷失败：' + err.message); }
     };
     reader.readAsText(f);
@@ -1864,14 +2531,63 @@
 
   // 导出工程：v3 紧凑格式（调色板 + RLE，类似 pig2.json，可选压缩）
   // 或 v2 旧版兼容格式（pixels 明文数组，类似 pig.json），由设置面板「导出格式」决定
+  // 或 v5 全图层格式（每图层独立 pixels 数组，导入可逐层恢复，不损失各图层像素）
   async function exportProject() {
-    if (!hasContent()) {
-      alert('画布是空的，没有内容可导出。'); return;
+    // 图片 LOD 原图模式图层：导出前合并 原图⊕overlay 写入 Map；导出完成后恢复 overlay-only
+    const imgLayers = [];
+    for (let li = 0; li < state.layers.length; li++) {
+      if (srcImages.has(state.layers[li])) { rasterizeSync(li); imgLayers.push(li); }
     }
-    const name = 'pixel-project-' + ts() + '.json';
+    try {
+      if (!hasContent()) {
+        alert('画布是空的，没有内容可导出。'); return;
+      }
+      const fmt = state.exportFormat;
+      const tag = (fmt === 'v2' || fmt === 'v5') ? fmt : 'v3';
+      const name = 'pixel-project-' + ts() + '-' + tag + '.json';
+      const objects = state.objects.map(serializeObject);
+      const instances = state.instances.map(serializeInstance);
+      return await exportProjectBody(fmt, tag, name, objects, instances);
+    } finally {
+      // 恢复 overlay-only：清空图片模式图层的 Map（overlay 条目保留），避免大 Map 驻留内存
+      for (const li of imgLayers) {
+        const si = srcImages.get(state.layers[li]);
+        if (si) {
+          const keep = new Map();
+          for (const [k, v] of state.layers[li].pixels) if (v !== undefined) keep.set(k, v);
+          state.layers[li].pixels = keep;
+          if (si.base) { si.base = null; si.baseHex = null; } // 释放基底（下次读取再懒加载）
+        }
+      }
+      requestRender();
+    }
+  }
+  // 导出主体（v2/v3/v5），从 exportProject 抽出以便 finally 恢复 overlay-only
+  async function exportProjectBody(fmt, tag, name, objects, instances) {
+
+    // v5 全图层格式：每图层独立的 pixels 明文数组（[[x,y,color],...]），含隐藏图层；
+    // 导入时逐层恢复，不合并、不损失各图层像素（shapes 矢量对象也按图层保留）
+    if (fmt === 'v5') {
+      const layersV5 = state.layers.map(function (L) {
+        const px = [];
+        for (const [key, color] of L.pixels) {
+          const i = key.indexOf(',');
+          px.push([+key.slice(0, i), +key.slice(i + 1), color]);
+        }
+        return { name: L.name, visible: L.visible !== false, pixels: px, shapes: Array.isArray(L.shapes) ? L.shapes : [] };
+      });
+      const out = {
+        app: 'infinite-grid-canvas', version: 5,
+        layers: layersV5,
+        objects: objects, instances: instances,
+        ...state.extra
+      };
+      downloadBlob(new Blob([JSON.stringify(out)]), name);
+      return;
+    }
 
     // v2 旧版兼容格式：[[x, y, color], ...] 明文数组（矢量对象与图层附加字段，旧版忽略）
-    if (state.exportFormat === 'v2') {
+    if (fmt === 'v2') {
       const merged = mergedVisiblePixels();
       if (merged.size > 500000) {
         if (!confirm('当前内容较大（' + merged.size + ' 个像素），v2 明文格式导出的文件会非常大且耗时较长，是否继续？')) return;
@@ -1884,8 +2600,8 @@
       const out = {
         app: 'infinite-grid-canvas', version: 2, pixels: pixels, shapes: [],
         layers: state.layers.map(function (L) { return { name: L.name, visible: L.visible, shapes: L.shapes }; }),
-        objects: state.objects.map(serializeObject),
-        instances: state.instances.map(serializeInstance),
+        objects: objects, instances: instances,
+        ...state.extra
       };
       downloadBlob(new Blob([JSON.stringify(out)]), name);
       return;
@@ -1898,12 +2614,10 @@
       const d = buildProjectData(L.pixels);
       return { name: L.name, visible: L.visible, pal: d.pal, rows: d.rows, shapes: L.shapes };
     });
-    const objects = state.objects.map(serializeObject);
-    const instances = state.instances.map(serializeInstance);
-    const payload = { pal: data.pal, rows: data.rows, shapes: [], layers: layers, objects: objects, instances: instances };
+    const payload = { pal: data.pal, rows: data.rows, shapes: [], layers: layers, objects: objects, instances: instances, ...state.extra };
     const level = state.compressLevel;
     if (level <= 0) {
-      const out = { app: 'infinite-grid-canvas', version: 3, pal: data.pal, rows: data.rows, shapes: [], layers: layers, objects: objects, instances: instances };
+      const out = { app: 'infinite-grid-canvas', version: 3, pal: data.pal, rows: data.rows, shapes: [], layers: layers, objects: objects, instances: instances, ...state.extra };
       downloadBlob(new Blob([JSON.stringify(out)]), name);
       return;
     }
@@ -1965,22 +2679,38 @@
           const raw = JSON.parse(reader.result);
           let pal = null, rows = null, arr = null, shapes = null, layers = null;
           let objects = null, instances = null; // 对象（含节点图/变量）与实例
+          let extra = {}; // 扩展字段（如思维导图 labels）：导入保留、导出带出（数据中转不丢失）
+          const KNOWN = new Set(['app', 'version', 'pixels', 'rows', 'pal', 'layers', 'objects', 'instances', 'shapes', 'alg', 'data']);
+          const collectExtra = function (o) {
+            const e = {};
+            for (const k of Object.keys(o)) if (!KNOWN.has(k)) e[k] = o[k];
+            return e;
+          };
           if (raw && typeof raw.data === 'string' && raw.alg) {
             // 压缩格式：先解压（objects/instances 在解压后的 inner 里）
             const inner = JSON.parse(await inflateText(raw.data, raw.alg));
             pal = inner.pal; rows = inner.rows; shapes = inner.shapes; layers = inner.layers;
             objects = inner.objects; instances = inner.instances;
+            extra = collectExtra(inner);
           } else if (raw && Array.isArray(raw.rows) && Array.isArray(raw.pal)) {
             // v3 明文格式
             pal = raw.pal; rows = raw.rows; shapes = raw.shapes; layers = raw.layers;
             objects = raw.objects; instances = raw.instances;
+            extra = collectExtra(raw);
           } else if (raw && Array.isArray(raw.pixels)) {
             arr = raw.pixels; // 旧版 v1/v2 格式
             shapes = raw.shapes; layers = raw.layers;
             objects = raw.objects; instances = raw.instances;
+            extra = collectExtra(raw);
+          } else if (raw && Array.isArray(raw.layers) && raw.layers.length && Array.isArray(raw.layers[0].pixels)) {
+            // v5 全图层格式：每图层独立的 pixels 明文数组（顶层无 pal/rows/pixels）
+            layers = raw.layers; shapes = raw.shapes;
+            objects = raw.objects; instances = raw.instances;
+            extra = collectExtra(raw);
           } else {
             throw new Error('不是有效的工程文件');
           }
+          state.extra = extra; // 供导出带出（labels 等）
           // 把 pal/rows 展开为像素 Map
           function expandRows(p, r) {
             const m = new Map();
@@ -2016,6 +2746,28 @@
             requestRender();
             alert('导入成功：' + msg);
           };
+          // 优先：v5 全图层格式（每层独立的 pixels 明文数组 [[x,y,color],...]，含隐藏图层）
+          if (Array.isArray(layers) && layers.length && layers[0] && Array.isArray(layers[0].pixels)) {
+            const newLayers = layers.map(function (l, i) {
+              const m = new Map();
+              const px = Array.isArray(l.pixels) ? l.pixels : [];
+              for (let pi = 0; pi < px.length; pi++) {
+                const p = px[pi];
+                if (!Array.isArray(p) || p.length < 3) continue;
+                const x = Math.round(+p[0]), y = Math.round(+p[1]);
+                if (!isFinite(x) || !isFinite(y)) continue;
+                m.set(x + ',' + y, String(p[2]));
+              }
+              return {
+                name: l.name || '图层 ' + (i + 1),
+                visible: l.visible !== false,
+                pixels: m,
+                shapes: Array.isArray(l.shapes) ? l.shapes : [],
+              };
+            });
+            finish(newLayers, '共 ' + newLayers.length + ' 个图层，各图层像素完整恢复。');
+            return;
+          }
           // 优先：v3 分层数据（每层含 pal/rows/shapes）
           if (Array.isArray(layers) && layers.length && layers[0] && Array.isArray(layers[0].rows) && Array.isArray(layers[0].pal)) {
             const newLayers = layers.map(function (l, i) {
@@ -2272,6 +3024,24 @@
   }
 
   let noiseGenerating = false;
+  renderNoiseSeedHist();
+  // 噪声种子历史（最近两次）与自动换种子
+  let noiseSeedHist = [];
+  function renderNoiseSeedHist() {
+    const box = document.getElementById('noiseSeedHist');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!noiseSeedHist.length) { box.innerHTML = '<span class="n-note">生成后自动记录前两次种子</span>'; return; }
+    noiseSeedHist.slice().reverse().forEach(function (s, i) {
+      const b = document.createElement('button');
+      b.className = 'btn';
+      b.style.cssText = 'padding:2px 8px;font-size:11px;margin-right:6px;';
+      b.textContent = (i === 0 ? '🕘 上一次种子 ' : '🕘 上上次种子 ') + s;
+      b.title = '点击回填该种子';
+      b.addEventListener('click', function () { els.noiseSeed.value = s; });
+      box.appendChild(b);
+    });
+  }
   // 把噪声图按像素写入画布：居中放置、分片生成（每帧 ≤24ms）、支持撤销
   function generateNoise() {
     if (noiseGenerating) return;
@@ -2314,6 +3084,11 @@
       }
       els.importStatus.style.display = 'none';
       noiseGenerating = false;
+      // 记录本次种子并自动切换新种子（下次无需手动输入）
+      noiseSeedHist.push(seed);
+      if (noiseSeedHist.length > 2) noiseSeedHist.shift();
+      renderNoiseSeedHist();
+      els.noiseSeed.value = Math.floor(Math.random() * 1000000);
       markDirtyRect(gx0, gy0, gx0 + w - 1, gy0 + h - 1);
       endStroke();
       requestRender();
@@ -2595,7 +3370,60 @@
   }
 
   function importImage(file) {
-    const url = URL.createObjectURL(file);
+    // GIF / APNG 动图：逐帧解码 → 每帧一个图层
+    const reader = new FileReader();
+    reader.onload = function () {
+      const ab = reader.result;
+      const dec = (typeof decodeAnimatedImage === 'function') ? decodeAnimatedImage(ab) : null;
+      if (dec && typeof dec.then === 'function') {
+        dec.then(function (res) {
+          if (res && res.frames && res.frames.length > 1) importAnimatedFrames(res, file.name);
+          else importStaticImage(ab, file);
+        }).catch(function () { importStaticImage(ab, file); });
+        return;
+      }
+      importStaticImage(ab, file);
+    };
+    reader.onerror = function () { alert('读取文件失败。'); };
+    reader.readAsArrayBuffer(file);
+  }
+
+  // 动图逐帧导入：每帧 → 一个新图层（帧0 替换当前活动图层内容，其余追加为图层）
+  function importAnimatedFrames(res, name) {
+    const frames = res.frames;
+    const w = res.width, h = res.height;
+    if (w * h > 20000000) {
+      if (!confirm('图片较大（' + w + '×' + h + '，约 ' +
+          Math.round(w * h / 1000000) + 'M 像素），导入可能需要较长时间，是否继续？')) return;
+    }
+    const [wx, wy] = screenToWorld(cssW() / 2, cssH() / 2);
+    const ox = Math.floor(wx), oy = Math.floor(wy);
+    // 每个帧 → 一个图层（图片 LOD：保留帧位图，延迟栅格化，缩小直接预览整帧）
+    const newLayers = frames.map(function (f, idx) {
+      const base = name ? name.replace(/\.[^.]+$/, '') : '图片';
+      const L = { name: (frames.length > 1 ? base + '·帧' + (idx + 1) : base), visible: true, pixels: new Map(), shapes: [] };
+      srcImages.set(L, { img: f.canvas, w: f.canvas.width, h: f.canvas.height, ox: ox, oy: oy, base: null, baseHex: null, baseBusy: false, bbox: null, overlay: null, overlayDirty: false });
+      return L;
+    });
+    // 替换当前所有图层为动图帧
+    state.layers = newLayers;
+    state.activeLayer = 0;
+    syncActiveLayerRefs();
+    layerChunks.length = 0;
+    // 标记脏区域
+    for (let i = 0; i < newLayers.length; i++) markDirtyRect(ox, oy, ox + w - 1, oy + h - 1, i);
+    clearHistory();
+    if (typeof renderLayerPanel === 'function') renderLayerPanel();
+    els.importStatus.style.display = 'none';
+    requestRender();
+    alert('已导入 ' + frames.length + ' 帧动图（' + w + '×' + h + '），每帧为一个图层（原图模式：缩略与放大编辑均保持流畅，编辑以增量覆盖在帧图上）。');
+  }
+
+  // 静态图片导入：空图层 → 图片 LOD 原图模式（不栅格化，缩小直接预览整图）；
+  // 图层已有内容 → 按原逻辑叠加栅格化（分片写入，保留旧语义）
+  function importStaticImage(ab, file) {
+    const blob = new Blob([ab], { type: file.type || 'image/png' });
+    const url = URL.createObjectURL(blob);
     const img = new Image();
     img.onload = function () {
       const w = img.naturalWidth, h = img.naturalHeight;
@@ -2608,17 +3436,28 @@
           return;
         }
       }
+      // 图片左上角放在当前屏幕中心
+      const [wx, wy] = screenToWorld(cssW() / 2, cssH() / 2);
+      const ox = Math.floor(wx), oy = Math.floor(wy);
+      const L = state.layers[state.activeLayer];
+      if (L.pixels.size === 0) {
+        // 空图层：进入图片 LOD 原图模式 —— 不栅格化，缩小时一次 drawImage 预览整图
+        srcImages.set(L, { img: img, w: w, h: h, ox: ox, oy: oy, base: null, baseHex: null, baseBusy: false, bbox: null, overlay: null, overlayDirty: false });
+        markDirtyRect(ox, oy, ox + w - 1, oy + h - 1);
+        clearHistory(); // 导入图片不可撤销
+        requestRender();
+        alert('已导入 ' + w + '×' + h + ' 图片，放置在屏幕中心（原图模式：缩略与放大编辑均保持流畅，编辑以增量覆盖在图片上）。');
+        URL.revokeObjectURL(url);
+        return;
+      }
       try {
         const c = document.createElement('canvas');
         c.width = w; c.height = h;
         const cx = c.getContext('2d', { willReadFrequently: true });
         cx.drawImage(img, 0, 0);
         const data = cx.getImageData(0, 0, w, h).data;
-        // 图片左上角放在当前屏幕中心
-        const [wx, wy] = screenToWorld(cssW() / 2, cssH() / 2);
-        const ox = Math.floor(wx), oy = Math.floor(wy);
-        const map = state.pixels;
-        // 按行分片写入，避免大图一次性导入卡死界面；每帧预算 24ms，更快完成
+        const map = L.pixels;
+        // 图层已有内容：按行分片叠加写入，避免大图一次性导入卡死界面；每帧预算 24ms
         els.importStatus.style.display = 'block';
         let row = 0;
         (function slice() {
@@ -2654,9 +3493,78 @@
     img.src = url;
   }
 
-  els.btnExportPng.addEventListener('click', function () { exportPNG(); }); // exportPNG 在 vector-canvas.js，点击时求值
+  els.btnExportPng.addEventListener('click', function () { exportImage(state.exportImageFormat || 'png'); }); // exportImage 在 vector-canvas.js，点击时求值
   els.btnExportJson.addEventListener('click', function () {
     exportProject().catch(function (e) { alert('导出工程失败：' + e.message); });
+  });
+
+  // 右键「导出工程」：弹出导出格式菜单（v5 全图层 / v3 紧凑 / v2 旧版兼容）
+  const exportFmtMenu = document.getElementById('exportFmtMenu');
+  function showExportFmtMenu(x, y) {
+    if (!exportFmtMenu) return;
+    // 高亮当前格式
+    exportFmtMenu.querySelectorAll('.export-fmt-item').forEach(function (el) {
+      el.classList.toggle('active', el.dataset.fmt === state.exportFormat);
+    });
+    exportFmtMenu.style.left = Math.min(x, window.innerWidth - exportFmtMenu.offsetWidth - 8) + 'px';
+    exportFmtMenu.style.top = Math.min(y, window.innerHeight - exportFmtMenu.offsetHeight - 8) + 'px';
+    exportFmtMenu.style.display = 'block';
+    setTimeout(function () { document.addEventListener('mousedown', hideExportFmtMenu); }, 0);
+  }
+  function hideExportFmtMenu(e) {
+    if (exportFmtMenu && exportFmtMenu.contains(e.target)) return;
+    exportFmtMenu.style.display = 'none';
+    document.removeEventListener('mousedown', hideExportFmtMenu);
+  }
+  if (exportFmtMenu) {
+    exportFmtMenu.querySelectorAll('.export-fmt-item').forEach(function (el) {
+      el.addEventListener('click', function () {
+        state.exportFormat = el.dataset.fmt;
+        if (els.settingsExportFormat) els.settingsExportFormat.value = state.exportFormat;
+        if (typeof updateExportFormatUI === 'function') updateExportFormatUI();
+        exportFmtMenu.style.display = 'none';
+        document.removeEventListener('mousedown', hideExportFmtMenu);
+        exportProject().catch(function (e) { alert('导出工程失败：' + e.message); });
+      });
+    });
+  }
+  els.btnExportJson.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    showExportFmtMenu(e.clientX, e.clientY);
+  });
+
+  // 右键「导出图片」：弹出导出图片格式菜单（PNG / JPG / WebP / GIF / APNG）
+  const imgFmtMenu = document.getElementById('imgFmtMenu');
+  function showImgFmtMenu(x, y) {
+    if (!imgFmtMenu) return;
+    imgFmtMenu.querySelectorAll('.img-fmt-item').forEach(function (el) {
+      el.classList.toggle('active', el.dataset.fmt === state.exportImageFormat);
+    });
+    imgFmtMenu.style.left = Math.min(x, window.innerWidth - imgFmtMenu.offsetWidth - 8) + 'px';
+    imgFmtMenu.style.top = Math.min(y, window.innerHeight - imgFmtMenu.offsetHeight - 8) + 'px';
+    imgFmtMenu.style.display = 'block';
+    setTimeout(function () { document.addEventListener('mousedown', hideImgFmtMenu); }, 0);
+  }
+  function hideImgFmtMenu(e) {
+    if (imgFmtMenu && imgFmtMenu.contains(e.target)) return;
+    imgFmtMenu.style.display = 'none';
+    document.removeEventListener('mousedown', hideImgFmtMenu);
+  }
+  if (imgFmtMenu) {
+    imgFmtMenu.querySelectorAll('.img-fmt-item').forEach(function (el) {
+      el.addEventListener('click', function () {
+        state.exportImageFormat = el.dataset.fmt;
+        if (els.settingsExportImageFormat) els.settingsExportImageFormat.value = state.exportImageFormat;
+        imgFmtMenu.style.display = 'none';
+        document.removeEventListener('mousedown', hideImgFmtMenu);
+        try { exportImage(state.exportImageFormat); }
+        catch (e) { alert('导出图片失败：' + (e && e.message || e)); }
+      });
+    });
+  }
+  els.btnExportPng.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    showImgFmtMenu(e.clientX, e.clientY);
   });
   els.btnImportJson.addEventListener('click', function () { els.fileInput.click(); });
   els.fileInput.addEventListener('change', function () {
@@ -2677,3 +3585,67 @@
     requestRender();
   }
   window.addEventListener('resize', resize);
+
+// 顶部 / 右侧工具栏独立隐藏开关（与左侧 ▤ 同一模式；不互相影响）
+// 状态记在 dataset.userHidden 上，updateUI（沉浸模式）会尊重它，画画不会强制显示回来
+const topToggle = document.getElementById('topToggle');
+const sideToggle = document.getElementById('sideToggle');
+if (topToggle) topToggle.addEventListener('click', function () {
+  const tb = document.getElementById('toolbar');
+  const hidden = tb.dataset.userHidden === '1';
+  tb.dataset.userHidden = hidden ? '' : '1';
+  updateUI();
+  topToggle.textContent = hidden ? '⤒' : '⤓';
+  topToggle.title = hidden ? '隐藏顶部工具栏' : '显示顶部工具栏';
+});
+// 初始化：设置面板「自定义笔刷/自定义橡皮」选项显示当前笔刷名（刷新后保持）
+if (typeof updateCustomBrushLabels === 'function') updateCustomBrushLabels();
+if (sideToggle) sideToggle.addEventListener('click', function () {
+  const st = document.getElementById('sideToolbar');
+  const hidden = st.dataset.userHidden === '1';
+  st.dataset.userHidden = hidden ? '' : '1';
+  // 右侧工具栏隐藏时，底部提示一并隐藏（同样记在 dataset 上，沉浸模式不强制显示回来）
+  const hintEl = document.getElementById('hint');
+  if (hintEl) hintEl.dataset.userHidden = hidden ? '' : '1';
+  updateUI();
+  sideToggle.textContent = hidden ? '⤍' : '⤎';
+  sideToggle.title = hidden ? '隐藏右侧工具栏' : '显示右侧工具栏';
+});
+
+// ---------- 画笔插件通用 API（供「画笔」等外部 JS 插件调用：实例化对象绘制像素） ----------
+// 主程序只提供通用接口，绘制逻辑（落笔/抬笔/颜色/粗细/擦除等节点）全部由插件 JS 实现。
+state.penCells = new Map(); // 对象索引 → 该对象所有实例绘制过的格子集合（供「全部擦除节点」使用）
+window.penAPI = {
+  // 当前笔刷大小（像素）与当前颜色
+  brushSize: function () { return state.brushSize; },
+  color: function () { return state.color; },
+  activeLayer: function () { return state.activeLayer; },
+  // 以 (x, y) 为中心画 size×size 方块到当前图层，并记录到该对象的绘制记录（可擦除）
+  drawAt: function (objIdx, x, y, size, color) {
+    const li = state.activeLayer;
+    const r = Math.max(1, Math.floor((size || 1) / 2));
+    let cells = state.penCells.get(objIdx);
+    if (!cells) { cells = new Set(); state.penCells.set(objIdx, cells); }
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const gx = Math.round(x) + dx, gy = Math.round(y) + dy;
+        const key = gx + ',' + gy;
+        paintCellRaw(key, color, li);
+        cells.add(key);
+      }
+    }
+  },
+  // 擦除该对象所有实例绘制过的像素（「全部擦除节点」用）
+  eraseObject: function (objIdx) {
+    const cells = state.penCells.get(objIdx);
+    if (!cells) return;
+    for (const key of cells) paintCellRaw(key, null);
+    state.penCells.delete(objIdx);
+  },
+  // 通用实例步进钩子：主程序每帧更新完每个实例后调用（画笔等插件注册绘制/逻辑用）
+  _stepHooks: [],
+  onStep: function (fn) { window.penAPI._stepHooks.push(fn); },
+  runStepHooks: function (obj, inst) {
+    for (const fn of window.penAPI._stepHooks) { try { fn(obj, inst); } catch (e) { /* 插件钩子错误忽略 */ } }
+  },
+};

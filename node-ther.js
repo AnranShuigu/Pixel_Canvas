@@ -62,25 +62,47 @@ registerNodeType('wasdMove', {
 // 网格类玩法（元胞自动机、五子棋落子等）与通用逻辑都能用这些基础节点拼出来。
 // ===================================================================
 
-// ---- 格子读取（数据）：当前实例所在格子是否有像素（有=1 无=0） ----
+// ---- 格子基础：解析目标格子坐标（实例位置 + 相对偏移 off；可用绝对坐标 pos 覆盖） ----
+// 统一坐标解析：未连线 off/pos 时 = 实例所在格；连线 off = 实例位置 + 相对偏移；
+// 连线 pos = 绝对坐标（覆盖 off 与实例位置）。返回 {x, y} 已取整。
+function gridCoord(inputs, inst) {
+  var x, y;
+  if (inputs.pos) {
+    x = inputs.pos.x;
+    y = inputs.pos.y;
+  } else {
+    x = inst.x;
+    y = inst.y;
+    if (inputs.off) { x += inputs.off.x; y += inputs.off.y; }
+  }
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+// ---- 格子读取（数据）：目标格子是否有像素（有=1 无=0） ----
 registerNodeType('pixelAt', {
   name: '格子读取', category: '自制',
-  desc: '读取当前实例所在格子：有像素输出 1，否则输出 0',
-  sockets: [{ key: 'out', dir: 'out', type: 'num', label: '有像素?' }],
+  desc: '读取格子是否有像素（有=1 无=0）：未连线=当前实例所在格，连线【偏移】=相对实例偏移的格子，连线【位置】=绝对坐标（覆盖偏移）',
+  sockets: [
+    { key: 'off', dir: 'in', type: 'vec', label: '偏移' },
+    { key: 'pos', dir: 'in', type: 'vec', label: '位置' },
+    { key: 'out', dir: 'out', type: 'num', label: '有像素?' },
+  ],
   value: function (inputs, inst) {
     var li = inst.layerIdx === undefined ? 0 : inst.layerIdx;
     var L = state.layers[li];
     if (!L) return 0;
-    return L.pixels.has(Math.round(inst.x) + ',' + Math.round(inst.y)) ? 1 : 0;
+    var c = gridCoord(inputs, inst);
+    return displayColor(L, c.x, c.y) ? 1 : 0; // 基于显示色（图片模式含原图基底）
   },
 });
 
-// ---- 格子写入（动作）：在当前实例所在格子画像素（值=1）或擦除（值=0） ----
+// ---- 格子写入（动作）：目标格子画像素（值=1）或擦除（值=0） ----
 registerNodeType('pixelSet', {
   name: '格子写入', category: '自制', flowIn: true, flowOut: true,
-  desc: '写像素：值输入 1=画上、0=擦除；位置未连线=当前实例所在格，连线=指定坐标；颜色：0黑 1白 2蓝(默认) 3红 4绿 5黄',
+  desc: '写像素：值输入 1=画上、0=擦除；未连线=当前实例所在格，连线【偏移】=相对实例偏移的格子，连线【位置】=绝对坐标（覆盖偏移）；颜色：0黑 1白 2蓝(默认) 3红 4绿 5黄',
   sockets: [
     { key: 'v', dir: 'in', type: 'num', label: '值' },
+    { key: 'off', dir: 'in', type: 'vec', label: '偏移' },
     { key: 'pos', dir: 'in', type: 'vec', label: '位置' },
     { key: 'color', dir: 'in', type: 'num', label: '颜色' },
   ],
@@ -89,14 +111,14 @@ registerNodeType('pixelSet', {
     var L = state.layers[li];
     if (!L) return;
     var v = inputs.v;
-    var x, y;
-    if (inputs.pos) { x = Math.round(inputs.pos.x); y = Math.round(inputs.pos.y); }
-    else { x = Math.round(inst.x); y = Math.round(inst.y); }
-    if (v === 0) L.pixels.delete(x + ',' + y);
+    if (v === null || v === undefined || isNaN(v)) v = 0; // 未连线/非法值按擦除处理
+    var c = gridCoord(inputs, inst);
+    if (v === 0) paintCellRaw(c.x + ',' + c.y, null); // 图片模式 = 挖洞
     else if (v > 0) {
       var PAL = ['#111111', '#ffffff', '#3b82f6', '#ef4444', '#22c55e', '#eab308'];
       var ci = inputs.color === null || inputs.color === undefined ? 2 : Math.round(inputs.color);
-      L.pixels.set(x + ',' + y, PAL[ci] || PAL[2]);
+      if (!(ci >= 0 && ci < PAL.length)) ci = 2; // 颜色索引越界/负数回退到默认蓝
+      paintCellRaw(c.x + ',' + c.y, PAL[ci]);
     }
     requestRender();
   },
@@ -128,21 +150,25 @@ registerNodeType('mouseY', {
   value: function () { return state.mouseGridY || 0; },
 });
 
-// ---- 邻域格子数（数据）：当前实例 8 邻域中有像素的格子数量（通用） ----
+// ---- 邻域格子数（数据）：目标格子 8 邻域中有像素的格子数量（通用） ----
 registerNodeType('neighborCount', {
   name: '邻域格子数', category: '侦测',
-  desc: '统计当前实例所在格子 8 邻域（上下左右+斜角）中有像素的格子数量（通用）',
-  sockets: [{ key: 'out', dir: 'out', type: 'num', label: '邻居数' }],
+  desc: '统计目标格子 8 邻域（上下左右+斜角）中有像素的格子数量：未连线=当前实例所在格，连线【偏移】=相对实例偏移的格子，连线【位置】=绝对坐标（覆盖偏移）',
+  sockets: [
+    { key: 'off', dir: 'in', type: 'vec', label: '偏移' },
+    { key: 'pos', dir: 'in', type: 'vec', label: '位置' },
+    { key: 'out', dir: 'out', type: 'num', label: '邻居数' },
+  ],
   value: function (inputs, inst) {
     var li = inst.layerIdx === undefined ? 0 : inst.layerIdx;
     var L = state.layers[li];
     if (!L) return 0;
+    var c = gridCoord(inputs, inst);
     var n = 0;
-    var x = Math.round(inst.x), y = Math.round(inst.y);
     for (var dy = -1; dy <= 1; dy++) {
       for (var dx = -1; dx <= 1; dx++) {
         if (dx === 0 && dy === 0) continue;
-        if (L.pixels.has((x + dx) + ',' + (y + dy))) n++;
+        if (displayColor(L, c.x + dx, c.y + dy)) n++; // 基于显示色（图片模式含原图基底）
       }
     }
     return n;
@@ -150,48 +176,20 @@ registerNodeType('neighborCount', {
 });
 
 // ---- 删除自身（动作）：输入为 1 时把当前实例从画布移除（子弹消失等） ----
+// 实现：标记删除（st._dead），由 nodeTick 每帧末统一清理。
+// 优点：不破坏当前帧的实例遍历（splice 会让 for...of 跳过相邻实例），
+//       且删除与该实例后续节点的执行完全解耦（删除后本帧仍执行完剩余节点）。
 registerNodeType('deleteSelf', {
-  name: '删除自身', category: '自制', flowIn: true, flowOut: true,
+  name: '删除自身', category: '控制', flowIn: true, flowOut: true,
   desc: '输入为 1 时把当前实例从画布移除（输入 0 则保留；用于子弹命中消失等）',
   sockets: [{ key: 'v', dir: 'in', type: 'num', label: '删除?' }],
   run: function (inputs, inst) {
     if (inputs.v !== 1) return;
-    var i = state.instances.findIndex(function (it) { return it.id === inst.id; });
-    if (i >= 0) state.instances.splice(i, 1);
+    inst.st._dead = true; // 标记：帧末统一清理
   },
 });
 
 // ---- 创建实例（动作）：输入为 1 时，在 8 邻域第一个空格子（无实例处）创建同对象新实例 ----
-registerNodeType('createInstanceAt', {
-  name: '创建实例', category: '自制', flowIn: true, flowOut: true,
-  desc: '输入为 1 时，在当前实例 8 邻域内第一个没有实例的格子创建同对象新实例（通用繁殖）',
-  sockets: [{ key: 'v', dir: 'in', type: 'num', label: '触发' }],
-  run: function (inputs, inst) {
-    if (inputs.v !== 1) return;
-    var obj = state.objects[inst.objectIdx];
-    if (!obj) return;
-    var occupied = new Set();
-    for (var i = 0; i < state.instances.length; i++) {
-      if (state.instances[i].objectIdx === inst.objectIdx) {
-        occupied.add(Math.round(state.instances[i].x) + ',' + Math.round(state.instances[i].y));
-      }
-    }
-    for (var dy = -1; dy <= 1; dy++) {
-      for (var dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        var k = Math.round(inst.x + dx) + ',' + Math.round(inst.y + dy);
-        if (!occupied.has(k)) {
-          var li = inst.layerIdx === undefined ? 0 : inst.layerIdx;
-          var L = state.layers[li];
-          if (L) L.pixels.set(k, '#3b82f6'); // 同步画上像素，保证邻居计数基于像素一致
-          state.instances.push({ id: nextInstId++, objectIdx: inst.objectIdx, x: inst.x + dx, y: inst.y + dy, st: {}, layerIdx: inst.layerIdx });
-          return;
-        }
-      }
-    }
-  },
-});
-
 // ===================================================================
 // 三、数学增强（逻辑/算术完备：补齐 非/取模/取整/绝对值/最小/最大）
 // 配合已有的 加减乘除/比较/与或，运算节点覆盖完整逻辑与整数算术
@@ -246,9 +244,10 @@ num2Def('numDiv', 'A / B', function (a, b) { return b === 0 ? 0 : a / b; });
 
 // ---- 创建指定对象实例（动作）：位置未连线=当前实例左上角，连线=指定位置 ----
 registerNodeType('createObjInst', {
-  name: '创建指定对象', category: '自制', flowIn: true, flowOut: true,
+  name: '创建指定对象', category: '控制', flowIn: true, flowOut: true,
   desc: '创建一个指定对象的实例（发射子弹、生成敌人、显示数字等）：对象=「对象索引」输入（未连线用参数）；位置未连线=当前实例位置，连线=指定位置',
   sockets: [
+    { key: 'v', dir: 'in', type: 'num', label: '触发' },
     { key: 'pos', dir: 'in', type: 'vec', label: '位置' },
     { key: 'objIn', dir: 'in', type: 'num', label: '对象索引' },
   ],
@@ -261,6 +260,7 @@ registerNodeType('createObjInst', {
     },
   }],
   run: function (inputs, inst, p) {
+    if (inputs.v !== null && inputs.v !== undefined && inputs.v !== 1) return; // 触发：未连线=默认触发，连线=输入 1 才创建
     var oi = (inputs.objIn === null || inputs.objIn === undefined) ? p.obj : Math.round(inputs.objIn);
     if (oi < 0 || !state.objects[oi]) return;
     var x = inst.x, y = inst.y;
@@ -271,7 +271,7 @@ registerNodeType('createObjInst', {
 
 // ---- 删除指定对象的所有实例（动作）：输入 1 时清空场上该对象 ----
 registerNodeType('deleteObjInst', {
-  name: '删除对象实例', category: '自制', flowIn: true, flowOut: true,
+  name: '删除指定对象', category: '控制', flowIn: true, flowOut: true,
   desc: '输入为 1 时删除指定对象的所有实例（清空场上该对象，如清空子弹/敌人）',
   sockets: [{ key: 'v', dir: 'in', type: 'num', label: '触发' }],
   params: [{
@@ -286,13 +286,13 @@ registerNodeType('deleteObjInst', {
     if (inputs.v !== null && inputs.v !== undefined && inputs.v !== 1) return; // 未连线=默认触发
     if (p.obj === -2) { // 删除所有对象的实例（保留当前实例所在对象，秒表刷新数字用）
       for (var i = state.instances.length - 1; i >= 0; i--) {
-        if (state.instances[i].objectIdx !== inst.objectIdx) state.instances.splice(i, 1);
+        if (state.instances[i].objectIdx !== inst.objectIdx) state.instances[i].st._dead = true;
       }
       return;
     }
     if (p.obj < 0) return;
     for (var i = state.instances.length - 1; i >= 0; i--) {
-      if (state.instances[i].objectIdx === p.obj) state.instances.splice(i, 1);
+      if (state.instances[i].objectIdx === p.obj) state.instances[i].st._dead = true;
     }
   },
 });
@@ -321,3 +321,22 @@ registerNodeType('myNode', {
 // ===================================================================
 num2Def('numAdd', 'A + B', function (a, b) { return a + b; });
 num2Def('numSub', 'A - B', function (a, b) { return a - b; });
+
+// ===================================================================
+// 打印节点（print）：把任意数据强制序列化为可读文本，实时显示在节点上
+// 核心效果 = 数据透视与类型转换：数字/布尔/字符串/向量/数组/对象 → 文本
+// 消除"黑盒"：运行中把内存里的值"拉"出来，变成你能看懂的文字
+// ===================================================================
+registerNodeType('print', {
+  name: '打印',
+  category: '自制',
+  flowIn: true, flowOut: true,
+  displayVal: true,
+  printVal: true,               // 标记：使用完整序列化 + 大显示框（见 updateNodeDisplay / 渲染）
+  desc: '把连接进来的任何数据（数字/布尔/字符串/向量/数组/对象）强制转为可读文本，实时显示在节点「🖨 输出」框中。数据透视与类型转换：运行中把内存里的值拉出来变成文字，消除黑盒。可挂入动作链观察每一帧经过的值',
+  sockets: [
+    { key: 'v', dir: 'in', type: 'any', label: '数据' },
+  ],
+  run: function (inputs) { return inputs.v; },
+  value: function (inputs) { return inputs.v; },
+});

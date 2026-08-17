@@ -21,7 +21,88 @@
 // 节点类型注册表（扩展接口）
 // ===================================================================
 const NODE_TYPES = {};
-function registerNodeType(type, def) { NODE_TYPES[type] = def; }
+const NODE_DEF_SRC = {}; // 类型 id → 可编辑的注册源码（右键编辑用）
+const deletedNodeIds = new Set(); // 用户删除的节点 id（含内置；持久化后重启仍跳过注册）
+function registerNodeType(type, def) {
+  if (deletedNodeIds.has(type)) return; // 用户已删除此节点（保存过），跳过注册
+  NODE_TYPES[type] = def;
+  NODE_DEF_SRC[type] = buildNodeSrc(type, def);
+}
+// 把任意值序列化为 JS 源码（函数用 toString，支持嵌套对象/数组）
+function jsonSrc(v, ind) {
+  if (typeof v === 'function') return v.toString();
+  if (Array.isArray(v)) return '[' + v.map(function (x) { return jsonSrc(x, ind + 1); }).join(', ') + ']';
+  if (v && typeof v === 'object') {
+    const ks = Object.keys(v);
+    if (!ks.length) return '{}';
+    const pad1 = new Array(ind * 2 + 2).join(' '), pad2 = new Array(ind * 2).join(' ');
+    return '{\n' + ks.map(function (k) { return pad1 + JSON.stringify(k) + ': ' + jsonSrc(v[k], ind + 1); }).join(',\n') + '\n' + pad2 + '}';
+  }
+  return JSON.stringify(v);
+}
+function buildNodeSrc(type, def) {
+  const L = [];
+  L.push("registerNodeType('" + type + "', {");
+  L.push('  name: ' + JSON.stringify(def.name) + ',');
+  L.push('  category: ' + JSON.stringify(def.category) + ',');
+  if (def.desc) L.push('  desc: ' + JSON.stringify(def.desc) + ',');
+  if (def.flowIn) L.push('  flowIn: true,');
+  if (def.flowOut) L.push('  flowOut: true,');
+  if (def.sockets) L.push('  sockets: ' + jsonSrc(def.sockets, 1) + ',');
+  if (def.params) L.push('  params: ' + jsonSrc(def.params, 1) + ',');
+  if (def.value) L.push('  value: ' + def.value.toString() + ',');
+  if (def.run) L.push('  run: ' + def.run.toString() + ',');
+  L.push('});');
+  return L.join('\n');
+}
+// ---------- 自制节点在线编辑（localStorage 持久化） ----------
+const CUSTOM_NODES_KEY = 'nd-custom-nodes';
+const customNodeCodes = {}; // 内存表：id → 代码（新增/编辑的自制节点）
+function loadCustomNodes() {
+  let raw = {};
+  try { raw = JSON.parse(localStorage.getItem(CUSTOM_NODES_KEY) || '{}'); } catch (e) { raw = {}; }
+  // 新格式 { nodes:{id:code}, deleted:[...] }；旧格式 { id:code } 兼容
+  const nodes = raw.nodes || raw;
+  for (const id of Object.keys(nodes)) customNodeCodes[id] = nodes[id];
+  if (Array.isArray(raw.deleted)) raw.deleted.forEach(function (id) { deletedNodeIds.add(id); });
+  for (const id of Object.keys(customNodeCodes)) {
+    try { (0, eval)(customNodeCodes[id]); } catch (e) { console.warn('自制节点加载失败: ' + id + ' · ' + e.message); }
+  }
+  customBaseline = new Set(Object.keys(customNodeCodes)); // 记录本次会话开始时已保存的自制节点
+}
+// 立即持久化全部状态（新增/编辑/删除后自动调用）
+function persistCustomNodes() {
+  localStorage.setItem(CUSTOM_NODES_KEY, JSON.stringify({ nodes: customNodeCodes, deleted: Array.from(deletedNodeIds) }));
+}
+let customBaseline = new Set();       // 本次会话开始时已保存的自制节点 id（用于统计“本次新增”）
+let newCustomNodesThisSession = new Set(); // 本次会话新增的自制节点 id
+let deletedThisSession = new Set();        // 本次会话删除的节点 id
+function saveCustomNode(id, code) {
+  const isNew = !customBaseline.has(id);
+  customNodeCodes[id] = code;
+  deletedNodeIds.delete(id); // 保存 = 恢复该 id（若曾删除）
+  if (isNew) newCustomNodesThisSession.add(id); // 新增的自制节点计入本次保存
+  // 注意：只更新内存，不写入 localStorage——点「💾 保存」按钮才持久化（重启后保留）
+}
+function deleteCustomNode(id) {
+  delete customNodeCodes[id];
+  deletedNodeIds.add(id); // 含内置节点：点「💾 保存」后重启不再注册
+  deletedThisSession.add(id); // 本次删除计入保存提示
+}
+// 【保存】按钮：手动把当前新增/删除状态写入 localStorage（重启后保留）
+function saveAllCustomNodes() {
+  persistCustomNodes();
+  const info = [];
+  const nNew = newCustomNodesThisSession.size;
+  const nDel = deletedThisSession.size;
+  if (nNew) info.push('已保存 ' + nNew + ' 个自制节点');
+  if (nDel) info.push('已记录 ' + nDel + ' 个被删除的节点（重启后不再出现）');
+  // 已保存的本次变更清零，下次保存只显示新一轮的新增/删除
+  newCustomNodesThisSession = new Set();
+  deletedThisSession = new Set();
+  customBaseline = new Set(Object.keys(customNodeCodes));
+  return info.join('；') || '没有新增/删除内容';
+}
 function defaultParams(def) {
   const p = {};
   if (def.params) for (const prm of def.params) p[prm.key] = prm.def;
@@ -29,10 +110,14 @@ function defaultParams(def) {
 }
 function hasOutput(def) { return def.sockets && def.sockets.some(function (s) { return s.dir === 'out'; }); }
 // 分类顺序：事件/运动/控制/侦测/运算/变量/自制（Scratch 式）→ 常量/输入/动作（Blender 基础）
+// 右侧工具栏弹出面板层级：谁先点击谁显示在最下面，后点击的永远显示在最上面
+let sidePanelZ = 30;
+function raiseSidePanel(el) { if (el) { sidePanelZ++; el.style.zIndex = sidePanelZ; } }
 const NODE_CATS = {
   '事件': '#ffd500', '运动': '#4c97ff', '控制': '#ffab19', '侦测': '#0fbd8c',
   '运算': '#59c059', '变量': '#ff8c1a', '自制': '#ff6680',
-  '常量': '#9aa0ab', '输入': '#7aa2ff', '动作': '#ff8c6b',
+  '声音': '#a855f7',
+  '常量': '#9aa0ab', '输入': '#7aa2ff', '插件': '#22d3ee',
 };
 // 按键下拉选项（当按下/键盘按下等节点使用）
 const KEY_OPTIONS = [
@@ -78,6 +163,34 @@ registerNodeType('constNum', {
   sockets: [{ key: 'out', dir: 'out', type: 'num', label: '数字' }],
   params: [{ key: 'v', label: '值', type: 'number', min: -1000, max: 1000, step: 0.1, def: 1 }],
   value: function (inputs, inst, p) { return p.v; },
+});
+registerNodeType('constStr', {
+  name: '字符串', category: '常量',
+  desc: '输出一段固定文本（字符串常量，可输入任意文字）',
+  sockets: [{ key: 'out', dir: 'out', type: 'str', label: '文本' }],
+  params: [{ key: 's', label: '文本', type: 'text', def: 'Hello' }],
+  value: function (inputs, inst, p) { return p.s; },
+});
+registerNodeType('constArrItem', {
+  name: '常量数组值', category: '常量',
+  desc: '选择「变量」分类中添加的数组，输出指定组/索引的常量值（把数组当作固定常量数据源）',
+  sockets: [
+    { key: 'grp', dir: 'in', type: 'num', label: '组' },
+    { key: 'idx', dir: 'in', type: 'num', label: '索引' },
+    { key: 'out', dir: 'out', type: 'num', label: '值' },
+  ],
+  params: [{ key: 'arr', label: '数组', type: 'select', def: '', options: arrOptions }],
+  value: function (inputs, inst, p) {
+    if (!p.arr) return 0;
+    const a = ensureInstArr(inst, p.arr);
+    const cap = arrSizeOf(state.objects[inst.objectIdx], p.arr);
+    const g = (inputs.grp === null || inputs.grp === undefined) ? 0 : Math.floor(inputs.grp);
+    const i = (inputs.idx === null || inputs.idx === undefined) ? 0 : Math.floor(inputs.idx);
+    if (g < 0 || i < 0 || i >= cap) return 0;
+    const row = a[g];
+    const v = Array.isArray(row) ? row[i] : 0;
+    return (typeof v === 'number' && isFinite(v)) ? v : 0;
+  },
 });
 
 // ---- 输入 ----
@@ -248,7 +361,7 @@ registerNodeType('vecClamp', {
 
 // ---- 动作 ----
 registerNodeType('move', {
-  name: '移动', category: '动作', flowIn: true, flowOut: true,
+  name: '移动', category: '运动', flowIn: true, flowOut: true,
   desc: '每帧把位移向量加到实例位置上',
   sockets: [{ key: 'vec', dir: 'in', type: 'vec', label: '位移' }],
   run: function (inputs, inst) {
@@ -258,7 +371,7 @@ registerNodeType('move', {
   },
 });
 registerNodeType('setPos', {
-  name: '设置位置', category: '动作', flowIn: true, flowOut: true,
+  name: '设置位置', category: '运动', flowIn: true, flowOut: true,
   desc: '把实例中心设置到目标位置',
   sockets: [{ key: 'vec', dir: 'in', type: 'vec', label: '位置' }],
   run: function (inputs, inst) {
@@ -299,6 +412,106 @@ registerNodeType('whenClicked', {
   name: '当对象被点击时', category: '事件',
   hat: 'click', flowOut: true,
   desc: '对象（实例）被鼠标点击的瞬间，从右侧连接点执行一次后续链',
+});
+
+// ---- 事件：当(音量/计时器)>A / 消息广播 / 计时器 ----
+let sceneTimer = 0;      // 全局计时器（秒，节点系统运行期间持续累加）
+let volumeLevel = 0;     // 麦克风响度 0-100
+let micInited = false;
+function ensureMic() {
+  if (micInited) return;
+  micInited = true;
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AC();
+      const src = ctx.createMediaStreamSource(stream);
+      const an = ctx.createAnalyser(); an.fftSize = 512;
+      src.connect(an);
+      const buf = new Uint8Array(an.fftSize);
+      (function volLoop() {
+        an.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+        volumeLevel = Math.min(100, Math.sqrt(sum / buf.length) * 100);
+        requestAnimationFrame(volLoop);
+      })();
+    }).catch(function () { volumeLevel = 0; });
+  } catch (e) { volumeLevel = 0; }
+}
+function getVolume() { ensureMic(); return volumeLevel; }
+// 广播消息：恢复所有等待该消息的实例，并同步触发所有「当接受到(消息)」链（同步执行 = 广播并等待）
+function broadcastMsg(m) {
+  for (const it of state.instances) { if (it.st.waitMsg === m) it.st.waitMsgGot = true; }
+  for (const it of state.instances) {
+    const og = state.objects[it.objectIdx];
+    if (!og || !og.graph) continue;
+    for (const nd of og.graph.nodes) {
+      const dd = NODE_TYPES[nd.type];
+      if (dd && dd.hat === 'msg' && (nd.p || {}).msg === m) execFlow(og.graph, nd.id, it, 0);
+    }
+  }
+}
+registerNodeType('whenCond', {
+  name: '当(音量/计时器)>A', category: '事件', hat: 'cond', flowOut: true,
+  desc: '音量（麦克风响度 0-100）或计时器（秒）超过阈值 A 的瞬间触发一次后续链（条件从假变真）',
+  params: [
+    { key: 'source', label: '来源', type: 'select', def: 'volume', options: function () { return [{ v: 'volume', label: '音量' }, { v: 'timer', label: '计时器' }]; } },
+    { key: 'th', label: '阈值', type: 'number', def: 10 },
+  ],
+  run: function () {},
+});
+registerNodeType('whenMsg', {
+  name: '当接受到(消息B)', category: '事件', hat: 'msg', flowOut: true,
+  desc: '当任何「广播(消息B)」执行时，触发一次后续链',
+  params: [{ key: 'msg', label: '消息', type: 'text', def: '开始' }],
+  run: function () {},
+});
+registerNodeType('broadcastMsg', {
+  name: '广播(消息B)', category: '事件', flowIn: true, flowOut: true,
+  desc: '向所有实例广播消息：触发所有「当接受到(消息B)」链，并恢复等待该消息的实例',
+  params: [{ key: 'msg', label: '消息', type: 'text', def: '开始' }],
+  run: function (inputs, inst, p) { broadcastMsg(p.msg); },
+});
+registerNodeType('broadcastMsgWait', {
+  name: '广播(消息B)并等待', category: '事件', flowIn: true, flowOut: true, flowBlock: 'waitSec',
+  desc: '广播消息：触发所有「当接受到(消息B)」链，并等待「等待时间」秒后继续本链（0/不填 = 接收方执行完立即继续）',
+  sockets: [{ key: 'sec', dir: 'in', type: 'num', label: '等待时间' }],
+  params: [
+    { key: 'msg', label: '消息', type: 'text', def: '开始' },
+    { key: 'sec2', label: '等待时间', type: 'number', port: 'sec', min: 0, max: 60, step: 0.1, def: 0 },
+  ],
+  run: function (inputs, inst, p) {
+    broadcastMsg(p.msg);
+    const v = (inputs.sec === null || inputs.sec === undefined) ? (p.sec2 || 0) : inputs.sec;
+    if (v > 0) inst.st.waitUntil = performance.now() + v * 1000;
+  },
+});
+registerNodeType('timerVal', {
+  name: '计时器', category: '事件', flowIn: true, flowOut: true, flowBlock: 'waitTimer',
+  desc: '等待计时器到达「等待时间」秒后继续本链（计时器从节点系统开始运行起累加；0/不填 = 立即继续）',
+  sockets: [{ key: 'sec', dir: 'in', type: 'num', label: '等待时间' }],
+  params: [{ key: 'sec2', label: '等待时间', type: 'number', port: 'sec', min: 0, max: 3600, step: 0.1, def: 0 }],
+  value: function () { return sceneTimer; },
+  run: function () {},
+});
+// ---- 控制：等待秒 / 等待事件 ----
+registerNodeType('waitSec', {
+  name: '等待A秒', category: '控制', flowIn: true, flowOut: true, flowBlock: 'waitSec',
+  desc: '暂停执行链 A 秒后继续（A 支持连线输入；0 = 不等待）',
+  sockets: [{ key: 'sec', dir: 'in', type: 'num', label: '秒' }],
+  params: [{ key: 'sec2', label: '秒', type: 'number', port: 'sec', min: 0, max: 60, step: 0.1, def: 1 }],
+  run: function (inputs, inst, p) {
+    const v = (inputs.sec === null || inputs.sec === undefined) ? (p.sec2 || 0) : inputs.sec;
+    if (!inst.st.waitUntil) inst.st.waitUntil = performance.now() + Math.max(0, v) * 1000;
+  },
+});
+registerNodeType('waitMsg', {
+  name: '等待(事件A)', category: '控制', flowIn: true, flowOut: true, flowBlock: 'waitMsg',
+  desc: '暂停执行链，直到收到消息 A 的广播后继续',
+  params: [{ key: 'msg', label: '消息', type: 'text', def: '开始' }],
+  run: function (inputs, inst, p) { inst.st.waitMsg = p.msg; inst.st.waitMsgGot = false; },
 });
 
 // ---- 节点组引用（组 = 打包好的子图；运行时递归执行组内逻辑） ----
@@ -423,22 +636,22 @@ registerNodeType('pointMouse', {
 });
 
 // ---- 控制（橙）----
-registerNodeType('ifElse', {
-  name: '选择(如果/否则)', category: '控制',
-  desc: '条件(非0为真)为真时输出 A，否则输出 B',
-  sockets: [
-    { key: 'cond', dir: 'in', type: 'num', label: '条件' },
-    { key: 'a', dir: 'in', type: 'vec', label: 'A' },
-    { key: 'b', dir: 'in', type: 'vec', label: 'B' },
-    { key: 'out', dir: 'out', type: 'vec', label: '结果' },
-  ],
-  value: function (inputs) {
-    const a = inputs.a, b = inputs.b;
-    const cond = inputs.cond === null || inputs.cond === undefined ? 0 : inputs.cond;
-    if (cond) return a || { x: 0, y: 0 };
-    return b || { x: 0, y: 0 };
-  },
-});
+//registerNodeType('ifElse', {
+// name: '选择(如果/否则)', category: '控制',
+// desc: '条件(非0为真)为真时输出 A，否则输出 B',
+// sockets: [
+//  { key: 'cond', dir: 'in', type: 'num', label: '条件' },
+//  { key: 'a', dir: 'in', type: 'vec', label: 'A' },
+//  { key: 'b', dir: 'in', type: 'vec', label: 'B' },
+//  { key: 'out', dir: 'out', type: 'vec', label: '结果' },
+// ],
+//  value: function (inputs) {
+//  const a = inputs.a, b = inputs.b;
+//  const cond = inputs.cond === null || inputs.cond === undefined ? 0 : inputs.cond;
+//  if (cond) return a || { x: 0, y: 0 };
+//  return b || { x: 0, y: 0 };
+// },
+//});
 registerNodeType('repeat', {
   name: '重复执行', category: '控制',
   flow: 'repeat', flowIn: true, flowOut: true,
@@ -448,7 +661,16 @@ registerNodeType('repeat', {
 registerNodeType('ifCond', {
   name: '条件判断', category: '控制',
   flow: 'ifCond', flowIn: true, flowOut: true,
-  desc: '任一条件为真时执行右侧连出的链；点节点上的「➕ 条件」可添加更多条件端口',
+  desc: '输入条件进行判断：条件为真（非 0）时 ▶ 输出 1，否则输出 0；条件为真时执行右侧连出的链',
+  sockets: [
+    { key: 'cond', dir: 'in', type: 'num', label: '条件' },
+    { key: 'out', dir: 'out', type: 'num', label: '布尔' },
+  ],
+  value: function (inputs) {
+    // 条件为真 → 输出 1，否则输出 0
+    const v = inputs.cond;
+    return (v !== null && v !== undefined && v !== 0 && !(typeof v === 'number' && isNaN(v))) ? 1 : 0;
+  },
 });
 registerNodeType('throttle', {
   name: '节流(每N帧)', category: '控制',
@@ -537,23 +759,38 @@ numOpDef('numLt', 'A < B ?', function (a, b) { return a < b ? 1 : 0; });
 numOpDef('numEq', 'A = B ?', function (a, b) { return a === b ? 1 : 0; });
 numOpDef('numAnd', 'A 且 B ?', function (a, b) { return (a !== 0 && b !== 0) ? 1 : 0; });
 numOpDef('numOr', 'A 或 B ?', function (a, b) { return (a !== 0 || b !== 0) ? 1 : 0; });
+// 单目数学（B 忽略）：cos / sin / tan / 平方根 / 绝对值
+numOpDef('numCos', 'cos(A)', function (a) { return Math.cos(a); });
+numOpDef('numSin', 'sin(A)', function (a) { return Math.sin(a); });
+numOpDef('numTan', 'tan(A)', function (a) { return Math.tan(a); });
+numOpDef('numSqrt', '√A', function (a) { return Math.sqrt(Math.max(0, a)); });
+numOpDef('numAbs', '|A|', function (a) { return Math.abs(a); });
 
 // ---- 变量（橙红）：变量本身是「数字」，通过节点读写，每个实例的值独立 ----
 function varOptions() {
   const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
   const opts = [{ v: '', label: '（选择变量）' }];
-  if (obj && obj.vars) for (const name of obj.vars) opts.push({ v: name, label: name });
+  if (obj && obj.vars) for (const v of obj.vars) {
+    const nm = (v && v.name) || v;
+    opts.push({ v: nm, label: nm });
+  }
   return opts;
 }
 registerNodeType('varGet', {
-  name: '变量值', category: '变量',
-  desc: '输出指定变量的当前值（数字）',
-  sockets: [{ key: 'out', dir: 'out', type: 'num', label: '值' }],
+  name: '变量', category: '变量',
+  desc: '输出变量当前值（数字或字符串；布尔用 0/1）。左侧【值】入口连接运算节点等输入可改变变量值',
+  sockets: [
+    { key: 'v', dir: 'in', type: 'num', label: '值' },
+    { key: 'out', dir: 'out', type: 'num', label: '值' },
+  ],
   params: [{ key: 'var', label: '变量', type: 'select', def: '', options: varOptions }],
   value: function (inputs, inst, p) {
-    if (!p.var || !inst.st.vars) return 0;
+    if (!p.var) return 0;
+    if (!inst.st.vars) inst.st.vars = {};
+    // 左侧【值】入口有连线输入 → 写入变量（通过运算节点等改变变量值）
+    if (inputs.v !== null && inputs.v !== undefined) inst.st.vars[p.var] = inputs.v;
     const v = inst.st.vars[p.var];
-    return (typeof v === 'number' && isFinite(v)) ? v : 0;
+    return (typeof v === 'number') ? v : (typeof v === 'string' ? v : 0);
   },
 });
 registerNodeType('varSet', {
@@ -580,6 +817,676 @@ registerNodeType('varChange', {
       (inputs.v === null || inputs.v === undefined ? 0 : inputs.v);
   },
 });
+// ---- 数组（变量类型：添加数组后可用） ----
+function arrOptions() {
+  const opts = [{ v: '', label: '（选择数组）' }];
+  const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
+  if (obj && obj.arrs) for (const a of obj.arrs) opts.push({ v: (a && a.name) || a, label: (a && a.name) || a });
+  return opts;
+}
+// 取得数组容量（数量），未设置默认 64
+function arrSizeOf(obj, name) {
+  if (obj && obj.arrs) {
+    for (const a of obj.arrs) if ((a && a.name) === name) return (a.size && a.size > 0) ? a.size : 64;
+  }
+  return 64;
+}
+// 实例数组：确保存在（从对象初始值复制）
+function ensureInstArr(inst, name) {
+  if (!inst.st.arrs) inst.st.arrs = {};
+  if (!Array.isArray(inst.st.arrs[name])) {
+    inst.st.arrs[name] = [];
+    const obj = state.objects[inst.objectIdx];
+    if (obj && obj.arrs) {
+      for (const a of obj.arrs) if ((a && a.name) === name && Array.isArray(a.values)) {
+        // 嵌套 [组][索引] 逐组复制（每个实例独立副本）
+        inst.st.arrs[name] = a.values.map(function (g) { return Array.isArray(g) ? g.slice() : g; });
+      }
+    }
+  }
+  return inst.st.arrs[name];
+}
+registerNodeType('arrGet', {
+  name: '数组值', category: '变量',
+  desc: '输出数组指定组/索引的值（数字；未连线组=0、索引=0；不超过容量）',
+  sockets: [
+    { key: 'grp', dir: 'in', type: 'num', label: '组' },
+    { key: 'idx', dir: 'in', type: 'num', label: '索引' },
+    { key: 'out', dir: 'out', type: 'num', label: '值' },
+  ],
+  params: [{ key: 'arr', label: '数组', type: 'select', def: '', options: arrOptions }],
+  value: function (inputs, inst, p) {
+    if (!p.arr) return 0;
+    const a = ensureInstArr(inst, p.arr);
+    const cap = arrSizeOf(state.objects[inst.objectIdx], p.arr);
+    const g = (inputs.grp === null || inputs.grp === undefined) ? 0 : Math.floor(inputs.grp);
+    const i = (inputs.idx === null || inputs.idx === undefined) ? 0 : Math.floor(inputs.idx);
+    if (g < 0 || i < 0 || i >= cap) return 0;
+    const row = a[g];
+    const v = Array.isArray(row) ? row[i] : 0;
+    return (typeof v === 'number' && isFinite(v)) ? v : 0;
+  },
+});
+registerNodeType('arrSet', {
+  name: '设置数组', category: '变量', flowIn: true, flowOut: true,
+  desc: '把值写入数组的指定组/索引（不超过容量；空位填 0）',
+  sockets: [
+    { key: 'grp', dir: 'in', type: 'num', label: '组' },
+    { key: 'idx', dir: 'in', type: 'num', label: '索引' },
+    { key: 'v', dir: 'in', type: 'num', label: '值' },
+  ],
+  params: [{ key: 'arr', label: '数组', type: 'select', def: '', options: arrOptions }],
+  run: function (inputs, inst, p) {
+    if (!p.arr) return;
+    const a = ensureInstArr(inst, p.arr);
+    const cap = arrSizeOf(state.objects[inst.objectIdx], p.arr);
+    const g = (inputs.grp === null || inputs.grp === undefined) ? 0 : Math.floor(inputs.grp);
+    const i = (inputs.idx === null || inputs.idx === undefined) ? 0 : Math.floor(inputs.idx);
+    if (g < 0 || i < 0 || i >= cap) return; // 超出容量不写入
+    if (!Array.isArray(a[g])) a[g] = [];
+    while (a[g].length <= i) a[g].push(0);
+    a[g][i] = (inputs.v === null || inputs.v === undefined) ? 0 : inputs.v;
+  },
+});
+registerNodeType('arrLen', {
+  name: '数组长度', category: '变量',
+  desc: '输出数组的元素个数（不超过容量）',
+  sockets: [{ key: 'out', dir: 'out', type: 'num', label: '长度' }],
+  params: [{ key: 'arr', label: '数组', type: 'select', def: '', options: arrOptions }],
+  value: function (inputs, inst, p) {
+    if (!p.arr) return 0;
+    const a = ensureInstArr(inst, p.arr);
+    return Array.isArray(a) ? a.length : 0;
+  },
+});
+// 变量监控绘制：由 pixel-canvas.js 的 render() 每帧调用（画布与舞台预览都会显示）
+function drawVarMonitors(p) {
+  if (!state.instances.length) return;
+  ctx.save();
+  ctx.setTransform(p, 0, 0, p, 0, 0); // 屏幕像素坐标（文字大小不随画布缩放变化）
+  ctx.font = 'bold 12px system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  const padX = 6;
+  for (const inst of state.instances) {
+    const st = inst.st;
+    if (!st || !st.showVars || !st.showVars.size) continue;
+    const li = inst.layerIdx === undefined ? 0 : inst.layerIdx;
+    if (!state.layers[li] || !state.layers[li].visible) continue; // 隐藏图层的实例不显示
+    // 实例左上角的世界坐标 → 屏幕坐标
+    const sx = inst.x * state.scale + state.offsetX;
+    const sy = inst.y * state.scale + state.offsetY;
+    let y = sy - 6; // 从实例上方开始，多个变量向上堆叠
+    for (const name of st.showVars) {
+      const raw = st.vars ? st.vars[name] : undefined;
+      const val = (typeof raw === 'number' && isFinite(raw))
+        ? (Number.isInteger(raw) ? String(raw) : String(+raw.toFixed(2)))
+        : (raw === undefined ? '0' : String(raw));
+      const text = name + ' = ' + val;
+      const tw = ctx.measureText(text).width;
+      const x = sx + 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(x - padX, y - 9, tw + padX * 2, 18);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(text, x, y);
+      y -= 20;
+    }
+  }
+  ctx.restore();
+}
+
+// ===================================================================
+// 声音（紫）：导入外部音频为「声音A」，节点播放 / 停止 / 控制音量与音调
+// 声音文件不随工程 JSON 保存，刷新页面后需重新导入
+// ===================================================================
+const SOUND_LIB = {};              // 声音名 -> { name, buffer, duration }
+const ACTIVE_SOUNDS = new Set();   // 所有正在播放的 AudioBufferSourceNode
+let audioCtx = null;
+
+function getAudioCtx() {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) audioCtx = new AC();
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    try { const rp = audioCtx.resume(); if (rp && rp.catch) rp.catch(function () {}); } catch (e) {}
+  }
+  return audioCtx;
+}
+
+// 每实例独立的声音状态 st.sound = { volume, pitch, name, src, gain, playing }
+function initInstSound(inst) {
+  if (!inst.st.sound) inst.st.sound = { volume: 100, pitch: 100, name: null, src: null, gain: null, playing: false };
+  return inst.st.sound;
+}
+
+// 播放（同一声音已在播放则不重新开始）；音量/音调取实例当前值
+function playSound(inst, name) {
+  if (!name) return;
+  const clip = SOUND_LIB[name];
+  if (!clip) return;
+  // 音乐编辑器导入的工程（kind='song'）：走音序调度播放
+  if (clip.kind === 'song') { playSong(inst, name, clip); return; }
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const s = initInstSound(inst);
+  if (s.playing && s.name === name) return;
+  const src = ctx.createBufferSource();
+  src.buffer = clip.buffer;
+  src.playbackRate.value = Math.max(0.01, s.pitch / 100);
+  const gain = ctx.createGain();
+  gain.gain.value = Math.max(0, Math.min(100, s.volume)) / 100;
+  src.connect(gain);
+  gain.connect(ctx.destination);
+  s.name = name; s.src = src; s.gain = gain; s.playing = true;
+  ACTIVE_SOUNDS.add(src);
+  src.onended = function () {
+    ACTIVE_SOUNDS.delete(src);
+    if (s.src === src) {
+      s.src = null; s.gain = null; s.playing = false;
+      // 「播放声音A等待播放完毕」：播放结束 → 从恢复点继续执行被暂停的链
+      const r = s.resume;
+      s.resume = null;
+      if (r) {
+        if (r.inst) r.inst.st.flowPaused = null;
+        if (r.nodeId) {
+          try {
+            if (r.isGroup) execGroupFlow(r.grp, r.nodeId, r.inst, r.ext, 0);
+            else execFlow(r.graph, r.nodeId, r.inst, 0);
+          } catch (e) { /* 恢复执行失败忽略 */ }
+        }
+      }
+    }
+  };
+  try { src.start(); } catch (e) {
+    ACTIVE_SOUNDS.delete(src);
+    s.playing = false; s.src = null; s.gain = null; s.name = null; s.resume = null;
+    if (inst.st) inst.st.flowPaused = null;
+  }
+}
+
+// 停止全部实例正在播放的声音（同时清除「等待播放完毕」的挂起状态）
+function stopAllSounds() {
+  for (const src of Array.from(ACTIVE_SOUNDS)) { try { src.stop(); } catch (e) {} }
+  ACTIVE_SOUNDS.clear();
+  for (const inst of state.instances) {
+    const s = inst.st && inst.st.sound;
+    if (s) { s.playing = false; s.src = null; s.gain = null; s.name = null; s.resume = null; }
+    if (inst.st) inst.st.flowPaused = null;
+  }
+}
+
+// 音量 0~100，音调默认 100（= 原速），即时应用到正在播放的声音
+function setInstVolume(inst, v) {
+  const s = initInstSound(inst);
+  s.volume = Math.max(0, Math.min(100, v));
+  if (s.gain) s.gain.gain.value = s.volume / 100;
+}
+function changeInstVolume(inst, d) { setInstVolume(inst, (inst.st.sound ? inst.st.sound.volume : 100) + d); }
+function setInstPitch(inst, v) {
+  const s = initInstSound(inst);
+  s.pitch = Math.max(1, Math.min(400, v));
+  if (s.src) s.src.playbackRate.value = s.pitch / 100;
+}
+function changeInstPitch(inst, d) { setInstPitch(inst, (inst.st.sound ? inst.st.sound.pitch : 100) + d); }
+
+// 「声音A」下拉选项（节点参数）
+function soundOptions() {
+  const names = Object.keys(SOUND_LIB);
+  const opts = [{ v: '', label: names.length ? '（选择声音）' : '（未导入声音）' }];
+  for (const name of names) opts.push({ v: name, label: name });
+  return opts;
+}
+
+// ---- 声音节点 ----
+registerNodeType('soundPlayWait', {
+  name: '播放声音A等待播放完毕', category: '声音', flowIn: true, flowOut: true, blockSound: true,
+  desc: '播放选中的声音，等它播放完毕后才继续执行后续节点',
+  params: [{ key: 'sound', label: '声音A', type: 'select', def: '', options: soundOptions }],
+  run: function (inputs, inst, p) { playSound(inst, p.sound); },
+});
+registerNodeType('soundPlay', {
+  name: '播放声音A', category: '声音', flowIn: true, flowOut: true,
+  desc: '播放选中的声音（若该声音已在播放则不会重新开始）',
+  params: [{ key: 'sound', label: '声音A', type: 'select', def: '', options: soundOptions }],
+  run: function (inputs, inst, p) { playSound(inst, p.sound); },
+});
+registerNodeType('soundStopAll', {
+  name: '停止所有声音', category: '声音', flowIn: true, flowOut: true,
+  desc: '立即停止所有实例正在播放的声音',
+  run: function () { stopAllSounds(); },
+});
+registerNodeType('soundVolUp', {
+  name: '将音量增加B', category: '声音', flowIn: true, flowOut: true,
+  desc: '把本实例的音量增加 B（音量范围 0~100）',
+  sockets: [{ key: 'b', dir: 'in', type: 'num', label: 'B' }],
+  params: [{ key: 'v', label: 'B', type: 'number', port: 'b', min: -100, max: 100, step: 1, def: 10 }],
+  run: function (inputs, inst, p) {
+    changeInstVolume(inst, inputs.b === null || inputs.b === undefined ? p.v : inputs.b);
+  },
+});
+registerNodeType('soundVolSet', {
+  name: '将音量设置为B', category: '声音', flowIn: true, flowOut: true,
+  desc: '把本实例的音量设置为 B（音量范围 0~100）',
+  sockets: [{ key: 'b', dir: 'in', type: 'num', label: 'B' }],
+  params: [{ key: 'v', label: 'B', type: 'number', port: 'b', min: 0, max: 100, step: 1, def: 100 }],
+  run: function (inputs, inst, p) {
+    setInstVolume(inst, inputs.b === null || inputs.b === undefined ? p.v : inputs.b);
+  },
+});
+registerNodeType('soundPitchSet', {
+  name: '将音调设置为B', category: '声音', flowIn: true, flowOut: true,
+  desc: '把本实例的音调设置为 B（默认 100 = 原速，越大音调越高/播放越快）',
+  sockets: [{ key: 'b', dir: 'in', type: 'num', label: 'B' }],
+  params: [{ key: 'v', label: 'B', type: 'number', port: 'b', min: 1, max: 400, step: 1, def: 100 }],
+  run: function (inputs, inst, p) {
+    setInstPitch(inst, inputs.b === null || inputs.b === undefined ? p.v : inputs.b);
+  },
+});
+registerNodeType('soundPitchUp', {
+  name: '将音调增加B', category: '声音', flowIn: true, flowOut: true,
+  desc: '把本实例的音调增加 B',
+  sockets: [{ key: 'b', dir: 'in', type: 'num', label: 'B' }],
+  params: [{ key: 'v', label: 'B', type: 'number', port: 'b', min: -100, max: 400, step: 1, def: 10 }],
+  run: function (inputs, inst, p) {
+    changeInstPitch(inst, inputs.b === null || inputs.b === undefined ? p.v : inputs.b);
+  },
+});
+
+// 导入外部音频文件（mp3 / wav / ogg / m4a 等）为「声音A」
+function importSoundFile(file) {
+  if (!/^audio\//i.test(file.type) && !/\.(mp3|wav|ogg|oga|m4a|aac|flac|webm)$/i.test(file.name)) {
+    alert('请选择音频文件（mp3 / wav / ogg / m4a / flac 等）。');
+    return;
+  }
+  const name = file.name.replace(/\.[^.]+$/, '') || ('声音' + (Object.keys(SOUND_LIB).length + 1));
+  const fr = new FileReader();
+  fr.onload = function () {
+    const ctx = getAudioCtx();
+    if (!ctx) { alert('当前浏览器不支持 Web Audio，无法导入声音。'); return; }
+    ctx.decodeAudioData(fr.result).then(function (buffer) {
+      // 重名覆盖：先停止所有正在播放旧声音的实例，避免旧音频继续播 / 继续阻塞等待节点
+      if (SOUND_LIB[name]) {
+        for (const inst of state.instances) {
+          const s = inst.st && inst.st.sound;
+          if (s && s.name === name && s.src) {
+            try { s.src.stop(); } catch (e) {}
+            s.playing = false; s.src = null; s.gain = null; s.name = null; s.resume = null;
+            if (inst.st) inst.st.flowPaused = null;
+          }
+        }
+      }
+      SOUND_LIB[name] = { name: name, buffer: buffer, duration: buffer.duration };
+      renderSoundUI();
+      renderNodeGraph();
+      alert('已导入声音「' + name + '」（' + buffer.duration.toFixed(1) + ' 秒）。\n可在「声音」分类节点的「声音A」下拉中选择；声音不随工程文件保存，刷新后需重新导入。');
+    }).catch(function () {
+      alert('解码失败：' + file.name + '（请换成 mp3 / wav / ogg 等常见格式）。');
+    });
+  };
+  fr.onerror = function () { alert('读取文件失败。'); };
+  fr.readAsArrayBuffer(file);
+}
+
+// 删除声音（同时停止正在播放它的实例）
+function deleteSound(name) {
+  if (!SOUND_LIB[name]) return;
+  for (const inst of state.instances) {
+    const s = inst.st && inst.st.sound;
+    if (s && s.name === name && s.src) {
+      try { s.src.stop(); } catch (e) {}
+      s.playing = false; s.src = null; s.gain = null; s.name = null; s.resume = null;
+      if (inst.st) inst.st.flowPaused = null;
+    }
+  }
+  delete SOUND_LIB[name];
+  renderSoundUI();
+  renderNodeGraph();
+}
+
+// ===================================================================
+// 音乐编辑器工程（歌曲）支持：
+// 「🎵 导入音频工程」导入音乐编辑器（所有网页/音乐编辑器/音乐编辑器.html）导出的
+// JSON 工程文件，注册进 SOUND_LIB（kind='song'）。播放时按工程 BPM 用合成器实时
+// 调度音符（不渲染成 AudioBuffer），与普通声音一样用「播放声音A」等节点触发。
+// 合成器移植自音乐编辑器内置乐器（piano / synth8 / bass / drums）。
+// ===================================================================
+const SONG_SYNTHS = {
+  piano: function (ctx, dest, trk, row, when, vel, srcs) {
+    const f = 440 * Math.pow(2, ((trk.startOctave + 1) * 12 + row - 69) / 12);
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.value = f;
+    const g = songEnvGain(ctx, when, 0.42 * vel, 0.42);
+    o.connect(g); g.connect(dest);
+    o.start(when); o.stop(when + 0.5);
+    srcs.push(o);
+  },
+  synth8: function (ctx, dest, trk, row, when, vel, srcs) {
+    const f = 440 * Math.pow(2, ((trk.startOctave + 1) * 12 + row - 69) / 12);
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.value = f;
+    const g = songEnvGain(ctx, when, 0.28 * vel, 0.18);
+    o.connect(g); g.connect(dest);
+    o.start(when); o.stop(when + 0.22);
+    srcs.push(o);
+  },
+  bass: function (ctx, dest, trk, row, when, vel, srcs) {
+    const f = 440 * Math.pow(2, ((trk.startOctave + 1) * 12 + row - 69) / 12);
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.value = f;
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = 900;
+    const g = songEnvGain(ctx, when, 0.35 * vel, 0.28);
+    o.connect(filt); filt.connect(g); g.connect(dest);
+    o.start(when); o.stop(when + 0.35);
+    srcs.push(o);
+  },
+  drums: function (ctx, dest, trk, row, when, vel, srcs) {
+    const t = when;
+    switch (row) {
+      case 0: { // Kick
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(150, t);
+        o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+        const g = songEnvGain(ctx, t, 0.9 * vel, 0.24);
+        o.connect(g); g.connect(dest);
+        o.start(t); o.stop(t + 0.3);
+        srcs.push(o);
+        break;
+      }
+      case 1: { // Snare
+        const n = songNoiseSource(ctx, t, 0.18);
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 0.8;
+        const g = songEnvGain(ctx, t, 0.55 * vel, 0.16);
+        n.connect(bp); bp.connect(g); g.connect(dest);
+        srcs.push(n);
+        break;
+      }
+      case 2: { // HiHat
+        const n = songNoiseSource(ctx, t, 0.05);
+        const hp = ctx.createBiquadFilter();
+        hp.type = 'highpass'; hp.frequency.value = 7000;
+        const g = songEnvGain(ctx, t, 0.28 * vel, 0.045);
+        n.connect(hp); hp.connect(g); g.connect(dest);
+        srcs.push(n);
+        break;
+      }
+      case 3: { // Open HiHat
+        const n = songNoiseSource(ctx, t, 0.3);
+        const hp = ctx.createBiquadFilter();
+        hp.type = 'highpass'; hp.frequency.value = 6500;
+        const g = songEnvGain(ctx, t, 0.22 * vel, 0.24);
+        n.connect(hp); hp.connect(g); g.connect(dest);
+        srcs.push(n);
+        break;
+      }
+      case 4: { // Clap
+        for (let i = 0; i < 3; i++) {
+          const wt = t + i * 0.012;
+          const n = songNoiseSource(ctx, wt, 0.08);
+          const bp = ctx.createBiquadFilter();
+          bp.type = 'bandpass'; bp.frequency.value = 1200; bp.Q.value = 1.2;
+          const g = ctx.createGain();
+          g.gain.setValueAtTime(0.0001, wt);
+          g.gain.exponentialRampToValueAtTime(0.4 * vel, wt + 0.005);
+          g.gain.exponentialRampToValueAtTime(0.0001, wt + 0.05);
+          n.connect(bp); bp.connect(g); g.connect(dest);
+          srcs.push(n);
+        }
+        break;
+      }
+      case 5: { // Tom
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(220, t);
+        o.frequency.exponentialRampToValueAtTime(110, t + 0.2);
+        const g = songEnvGain(ctx, t, 0.5 * vel, 0.26);
+        o.connect(g); g.connect(dest);
+        o.start(t); o.stop(t + 0.32);
+        srcs.push(o);
+        break;
+      }
+    }
+  },
+};
+
+let songNoiseBuf = null;
+function getSongNoise(ctx) {
+  if (!songNoiseBuf) {
+    const len = ctx.sampleRate * 2;
+    songNoiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = songNoiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  }
+  return songNoiseBuf;
+}
+function songNoiseSource(ctx, when, dur) {
+  const src = ctx.createBufferSource();
+  src.buffer = getSongNoise(ctx);
+  src.loop = true;
+  src.start(when);
+  src.stop(when + dur);
+  return src;
+}
+function songEnvGain(ctx, when, peak, dur) {
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0001), when + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  return g;
+}
+
+// 静音时钟缓冲：作为歌曲总时长的结束信号（onended → 恢复等待链 / 清理状态）
+function makeSilentBuffer(ctx, dur) {
+  const len = Math.max(1, Math.ceil(ctx.sampleRate * Math.max(0.05, dur)));
+  return ctx.createBuffer(1, len, ctx.sampleRate); // 全 0，静音
+}
+
+// 按工程 BPM 实时调度音符播放（每实例独立音量/音调；音调 = 播放速度）
+function playSong(inst, name, clip) {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const s = initInstSound(inst);
+  if (s.playing && s.name === name) return;
+  const speed = Math.max(0.01, s.pitch / 100);
+  const stepD = 60 / clip.song.bpm / 4 / speed;
+  const steps = clip.song.beatsPerBar * clip.song.bars * 4;
+  const dur = steps * stepD;
+  const t0 = ctx.currentTime + 0.06;
+  const gain = ctx.createGain();
+  gain.gain.value = s.volume / 100;
+  gain.connect(ctx.destination);
+  const clock = ctx.createBufferSource();
+  clock.buffer = makeSilentBuffer(ctx, dur);
+  clock.connect(gain); // 静音：仅作为结束时钟
+  ACTIVE_SOUNDS.add(clock);
+  const anySolo = clip.song.tracks.some(function (t) { return t.solo; });
+  for (const trk of clip.song.tracks) {
+    if (trk.muted) continue;
+    if (anySolo && !trk.solo) continue;
+    const def = SONG_SYNTHS[trk.instrument];
+    if (!def) continue;
+    const trkCells = trk.cells || [];
+    for (const key of trkCells) {
+      const parts = String(key).split(',');
+      if (parts.length < 2) continue;
+      const r = parseInt(parts[0], 10);
+      const st = parseInt(parts[1], 10);
+      if (isNaN(r) || isNaN(st) || st < 0 || st >= steps) continue;
+      const srcs = [];
+      def(ctx, gain, trk, r, t0 + st * stepD, 0.9, srcs);
+      for (const src of srcs) ACTIVE_SOUNDS.add(src);
+    }
+  }
+  s.name = name; s.src = clock; s.gain = gain; s.playing = true;
+  clock.onended = function () {
+    ACTIVE_SOUNDS.delete(clock);
+    if (s.src === clock) {
+      s.src = null; s.gain = null; s.playing = false;
+      // 「播放声音A等待播放完毕」：歌曲结束 → 从恢复点继续执行被暂停的链
+      const r = s.resume;
+      s.resume = null;
+      if (r) {
+        if (r.inst) r.inst.st.flowPaused = null;
+        if (r.nodeId) {
+          try {
+            if (r.isGroup) execGroupFlow(r.grp, r.nodeId, r.inst, r.ext, 0);
+            else execFlow(r.graph, r.nodeId, r.inst, 0);
+          } catch (e) { /* 恢复执行失败忽略 */ }
+        }
+      }
+    }
+  };
+  try { clock.start(t0); } catch (e) {
+    ACTIVE_SOUNDS.delete(clock);
+    s.playing = false; s.src = null; s.gain = null; s.name = null; s.resume = null;
+    if (inst.st) inst.st.flowPaused = null;
+  }
+}
+
+// 导入音乐编辑器导出的 JSON 工程：自动用 OfflineAudioContext 渲染成 WAV（AudioBuffer），
+// 以普通声音（kind='buffer'）注册，播放行为与导入的 mp3/wav 文件完全一致
+// （音调 playbackRate 变速变调、等待播放完毕等）。渲染失败时降级为实时合成（kind='song'）。
+function importSongFile(file) {
+  const fr = new FileReader();
+  fr.onload = function () {
+    let data;
+    try { data = JSON.parse(String(fr.result).replace(/^\uFEFF/, '')); } catch (e) { alert('不是有效的 JSON 文件。'); return; }
+    if (!data || data.app !== 'music-editor' || !Array.isArray(data.tracks)) {
+      alert('不是音乐编辑器导出的工程文件（缺少 app: "music-editor"）。\n请先在音乐编辑器中编辑并「📄 导出工程」，再导入此 JSON。');
+      return;
+    }
+    const name = file.name.replace(/\.json$/i, '') || ('歌曲' + (Object.keys(SOUND_LIB).length + 1));
+    const bpm = clamp(parseInt(data.bpm, 10) || 120, 40, 240);
+    const beatsPerBar = parseInt(data.beatsPerBar, 10) || 4;
+    const bars = clamp(parseInt(data.bars, 10) || 2, 1, 4);
+    const steps = beatsPerBar * bars * 4;
+    const tracks = [];
+    for (const t of data.tracks) {
+      if (!SONG_SYNTHS[t.instrument]) continue;
+      const cells = [];
+      for (const key of t.cells || []) {
+        const parts = String(key).split(',');
+        if (parts.length === 2) cells.push(parts[0] + ',' + parts[1]);
+      }
+      tracks.push({
+        name: t.name || '', instrument: t.instrument,
+        startOctave: t.startOctave || 3, octaves: t.octaves || 2,
+        muted: !!t.muted, solo: !!t.solo, cells: cells,
+      });
+    }
+    if (!tracks.length) { alert('工程里没有可播放的轨道（乐器类型不被支持）。'); return; }
+    const song = { bpm: bpm, beatsPerBar: beatsPerBar, bars: bars, tracks: tracks };
+    // 自动转码为 WAV 后再导入
+    renderSongToBuffer(song, data.volume).then(function (buf) {
+      stopInstancesOf(name);
+      SOUND_LIB[name] = { name: name, buffer: buf, duration: buf.duration, src: 'song' };
+      renderSoundUI();
+      renderNodeGraph();
+      alert('已导入音频工程「' + name + '」（自动转码为 WAV：' + buf.duration.toFixed(1) + ' 秒 · ' + tracks.length + ' 轨）。\n可在「声音」分类节点的「声音A」下拉中选择；声音不随工程文件保存，刷新后需重新导入。');
+    }).catch(function (err) {
+      // 降级：浏览器不支持离线渲染 → 注册为实时合成歌曲
+      const duration = steps * (60 / bpm / 4);
+      stopInstancesOf(name);
+      SOUND_LIB[name] = { name: name, kind: 'song', song: song, duration: duration };
+      renderSoundUI();
+      renderNodeGraph();
+      alert('已导入音频工程「' + name + '」（' + tracks.length + ' 轨 · ' + duration.toFixed(1) + ' 秒）。\n离线转码不可用（' + (err && err.message ? err.message : '未知原因') + '），已改用实时合成播放。');
+    });
+  };
+  fr.onerror = function () { alert('读取文件失败。'); };
+  fr.readAsText(file);
+}
+
+// 停止所有正在播放名为 name 的声音/歌曲的实例（重名覆盖前调用）
+function stopInstancesOf(name) {
+  if (!SOUND_LIB[name]) return;
+  for (const inst of state.instances) {
+    const s = inst.st && inst.st.sound;
+    if (s && s.name === name && s.src) {
+      try { s.src.stop(); } catch (e) {}
+      s.playing = false; s.src = null; s.gain = null; s.name = null; s.resume = null;
+      if (inst.st) inst.st.flowPaused = null;
+    }
+  }
+}
+
+// 用 OfflineAudioContext 把工程渲染为 AudioBuffer（= WAV 数据）；
+// 音乐编辑器里的音量设置烘焙进波形，音符按 BPM 调度到离线路由
+function renderSongToBuffer(song, volume) {
+  const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!AC) return Promise.reject(new Error('浏览器不支持 OfflineAudioContext'));
+  try {
+    const sr = 44100;
+    const stepD = 60 / song.bpm / 4;
+    const steps = song.beatsPerBar * song.bars * 4;
+    const dur = steps * stepD;
+    const tail = 0.5; // 尾部留白，避免最后一个音符被截断
+    const off = new AC(2, Math.ceil(sr * (dur + tail)), sr);
+    const master = off.createGain();
+    master.gain.value = clamp(parseInt(volume, 10) || 80, 0, 100) / 100;
+    master.connect(off.destination);
+    const anySolo = song.tracks.some(function (t) { return t.solo; });
+    for (const trk of song.tracks) {
+      if (trk.muted) continue;
+      if (anySolo && !trk.solo) continue;
+      const def = SONG_SYNTHS[trk.instrument];
+      if (!def) continue;
+      for (const key of trk.cells) {
+        const parts = String(key).split(',');
+        if (parts.length < 2) continue;
+        const r = parseInt(parts[0], 10);
+        const st = parseInt(parts[1], 10);
+        if (isNaN(r) || isNaN(st) || st < 0 || st >= steps) continue;
+        def(off, master, trk, r, 0.05 + st * stepD, 0.9, []);
+      }
+    }
+    return off.startRendering().then(function (buffer) { return buffer; });
+  } catch (e) {
+    // 渲染过程任何同步错误都不静默：转为 reject，由调用方降级并提示原因
+    return Promise.reject(e);
+  }
+}
+
+// 渲染小面板 / 全屏编辑器里的声音列表
+function renderSoundUI() {
+  const names = Object.keys(SOUND_LIB);
+  for (const listEl of [soundListEl, scratchSoundListEl]) {
+    listEl.innerHTML = '';
+    if (!names.length) {
+      const note = document.createElement('span');
+      note.className = 'n-note';
+      note.style.fontSize = '11px'; // 空列表提示用小号字，弱化视觉
+      note.textContent = '（未导入声音）';
+      listEl.appendChild(note);
+      continue;
+    }
+    for (const name of names) {
+      const clip = SOUND_LIB[name];
+      const item = document.createElement('div');
+      item.className = 'sound-item';
+      const nm = document.createElement('span');
+      nm.textContent = (clip.kind === 'song' || clip.src === 'song' ? '🎵 ' : '🔊 ') + name + '（' + clip.duration.toFixed(1) + 's）';
+      nm.title = (clip.kind === 'song' || clip.src === 'song' ? '歌曲：' : '声音：') + name + '（' + clip.duration.toFixed(1) + ' 秒）'; // 名称超宽省略时悬浮显示全名
+      item.appendChild(nm);
+      const del = document.createElement('span');
+      del.className = 'del';
+      del.textContent = '×';
+      del.title = '删除声音「' + name + '」';
+      del.addEventListener('click', (function (n) { return function () { deleteSound(n); }; })(name));
+      item.appendChild(del);
+      listEl.appendChild(item);
+    }
+  }
+}
+const soundListEl = document.getElementById('soundList');
+const scratchSoundListEl = document.getElementById('scratchSoundList');
+const soundFileInput = document.getElementById('soundFileInput');
 
 // ===================================================================
 // 对象模板
@@ -599,13 +1506,25 @@ function ensureGraph(obj) {
 let GROUPS = {};            // 组名 → { name, graph, inputs, outputs }
 let selNodeSet = new Set(); // 节点多选集合（框选打包用）
 let graphSelStart = null, graphSelEnd = null; // 框选矩形（屏幕坐标）
-let graphEditGroup = null;  // 正在展开编辑的组名（null = 主图）
+let graphEditGroup = null;  // 正在展开编辑的节点组路径（数组，如 ['A','B']；null = 主图）
+let graphEditGroupMaxDepth = 3; // 节点组嵌套最大层数（超过禁止打包/导入）
 
 // 注册节点组（供 JS 文件 registerNodeGroup(...) 调用，也用于打包）
 function registerNodeGroup(name, def) {
   if (!def || !def.graph) return;
   const io = deriveGroupIO(def.graph);
   GROUPS[name] = { name: name, graph: def.graph, inputs: io.inputs, outputs: io.outputs };
+}
+// 删除一个节点组（画布上引用它的 groupRef 节点保留，但组不存在）
+function deleteGroup(name) {
+  if (!GROUPS[name]) return;
+  // 若正在编辑该组，先退出组编辑
+  if (graphEditGroup && graphEditGroup[graphEditGroup.length - 1] === name) doneGroupEdit();
+  delete GROUPS[name];
+  fillNodeCatSelect();
+  renderNodeGraph();
+  if (scratchModeOn) fillScratchPalette();
+  else if (typeof renderNodePanel === 'function') renderNodePanel();
 }
 // 组接口自动推导：
 //  inputs  = 组内未被内部连线覆盖的输入端口（对外输入）
@@ -630,7 +1549,10 @@ function deriveGroupIO(g) {
 }
 // 当前正在编辑的图（展开组编辑时返回组内图，否则返回对象主图）
 function currentGraph() {
-  if (graphEditGroup && GROUPS[graphEditGroup]) return GROUPS[graphEditGroup].graph;
+  if (graphEditGroup && graphEditGroup.length) {
+    const gn = graphEditGroup[graphEditGroup.length - 1];
+    if (GROUPS[gn]) return GROUPS[gn].graph;
+  }
   const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
   return obj ? ensureGraph(obj) : null;
 }
@@ -647,22 +1569,14 @@ function groupNodeInputs(grp, nodeId, inst, ext, cache, visiting) {
     for (const sock of def.sockets) {
       if (sock.dir !== 'in') continue;
       const src = findConn(g, nodeId, sock.key);
-      if (src) inputs[sock.key] = groupNodeValue(grp, src.from, inst, ext, cache, visiting);
+      if (src) inputs[sock.key] = groupNodeValue(grp, src.from, inst, ext, cache, visiting, src.fromSock);
       else if (ext && ext[nodeId + '::' + sock.key] !== undefined) inputs[sock.key] = ext[nodeId + '::' + sock.key];
       else inputs[sock.key] = null;
     }
   }
-  if (node.type === 'ifCond' && node.p && node.p.conds) {
-    for (const ck of node.p.conds) {
-      const src = findConn(g, nodeId, ck);
-      if (src) inputs[ck] = groupNodeValue(grp, src.from, inst, ext, cache, visiting);
-      else if (ext && ext[nodeId + '::' + ck] !== undefined) inputs[ck] = ext[nodeId + '::' + ck];
-      else inputs[ck] = null;
-    }
-  }
   return inputs;
 }
-function groupNodeValue(grp, nodeId, inst, ext, cache, visiting) {
+function groupNodeValue(grp, nodeId, inst, ext, cache, visiting, fromSock) {
   if (cache.has(nodeId)) return cache.get(nodeId);
   if (visiting.has(nodeId)) return null;
   const g = grp.graph;
@@ -673,9 +1587,10 @@ function groupNodeValue(grp, nodeId, inst, ext, cache, visiting) {
   visiting.add(nodeId);
   const inputs = groupNodeInputs(grp, nodeId, inst, ext, cache, visiting);
   let val = null;
-  try { val = def.value(inputs, inst, node.p || {}, inst.st); } catch (e) { val = null; }
+  try { val = def.value(inputs, inst, node.p || {}, inst.st, fromSock); } catch (e) { val = null; }
   visiting.delete(nodeId);
   cache.set(nodeId, val);
+  if (def.displayVal) updateNodeDisplay(node, val);
   return val;
 }
 function execGroupFlow(grp, nodeId, inst, ext, depth) {
@@ -688,6 +1603,18 @@ function execGroupFlow(grp, nodeId, inst, ext, depth) {
   const cache = new Map(), visiting = new Set();
   const inputs = groupNodeInputs(grp, nodeId, inst, ext, cache, visiting);
   if (def.run) { try { def.run(inputs, inst, node.p || {}, inst.st); } catch (e) { /* 节点错误跳过 */ } }
+  // 【显示值】类节点挂在动作链上：显示输入值
+  if (def.displayVal) updateNodeDisplay(node, inputs.v);
+  // 阻塞节点（组内「播放声音A等待播放完毕」）：暂停组内链，播完由 onended 恢复
+  if (def.blockSound) {
+    const s = inst.st.sound;
+    const want = (node.p || {}).sound;
+    if (want && s && s.name === want && s.playing) {
+      inst.st.flowPaused = { graph: grp.graph, nodeId: findFlow(g, node.id), inst: inst, isGroup: true, grp: grp, ext: ext };
+      s.resume = inst.st.flowPaused;
+      return;
+    }
+  }
   const next = findFlow(g, node.id);
   if (def.flow === 'repeat') {
     const raw = inputs.n;
@@ -706,6 +1633,7 @@ function execGroupFlow(grp, nodeId, inst, ext, depth) {
 function evalGroupGraph(grp, ext, inst) {
   const g = grp.graph;
   if (!g) return;
+  if (inst.st.flowPaused && inst.st.flowPaused.graph === g) return; // 「等待播放完毕」暂停中
   const hasFlow = g.flows && g.flows.length > 0;
   if (!hasFlow) {
     for (const node of g.nodes) {
@@ -735,7 +1663,7 @@ function groupExtInputs(grp, groupNode, inst, g) {
   const ext = {};
   for (const pin of grp.inputs) {
     const src = findConn(g, groupNode.id, pin.extKey);
-    ext[pin.nodeId + '::' + pin.sockKey] = src ? nodeValue(g, src.from, inst, new Map(), new Set()) : null;
+    ext[pin.nodeId + '::' + pin.sockKey] = src ? nodeValue(g, src.from, inst, new Map(), new Set(), src.fromSock) : null;
   }
   return ext;
 }
@@ -744,11 +1672,36 @@ function groupOutValue(grp, extKey, groupNode, inst, g) {
   const out = grp.outputs.find(function (o) { return o.extKey === extKey; });
   if (!out) return null;
   const ext = groupExtInputs(grp, groupNode, inst, g);
-  return groupNodeValue(grp, out.nodeId, inst, ext, new Map(), new Set());
+  return groupNodeValue(grp, out.nodeId, inst, ext, new Map(), new Set(), out.sockKey);
 }
 // 从图层提取矩形区域（含内容裁剪）：返回 { pixels: Map<"dx,dy",color>, w, h, ox, oy }
 function extractRegion(li, x0, y0, x1, y1) {
-  const src = state.layers[li].pixels;
+  const L = state.layers[li];
+  if (L && srcImages.has(L)) {
+    // 图片 LOD 原图模式图层：基于显示色（原图⊕overlay）提取，懒加载基底
+    const si = srcImages.get(L);
+    ensureBaseOf(L, si);
+    const xa = x0 === -Infinity ? si.ox : Math.max(x0, si.ox);
+    const xb = x1 === Infinity ? si.ox + si.w - 1 : Math.min(x1, si.ox + si.w - 1);
+    const ya = y0 === -Infinity ? si.oy : Math.max(y0, si.oy);
+    const yb = y1 === Infinity ? si.oy + si.h - 1 : Math.min(y1, si.oy + si.h - 1);
+    const list = [];
+    for (let y = ya; y <= yb; y++)
+      for (let x = xa; x <= xb; x++) {
+        const c = displayColor(L, x, y);
+        if (c) list.push([x, y, c]);
+      }
+    if (list.length === 0) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of list) {
+      if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+    }
+    const rel = new Map();
+    for (const p of list) rel.set((p[0] - minX) + ',' + (p[1] - minY), p[2]);
+    return { pixels: rel, w: maxX - minX + 1, h: maxY - minY + 1, ox: minX, oy: minY };
+  }
+  const src = L.pixels;
   const list = [];
   for (const [key, col] of src) {
     const i = key.indexOf(',');
@@ -780,8 +1733,10 @@ function buildObjectCanvas(obj) {
   return c;
 }
 function createObject(obj) {
-  obj.graph = { nodes: [], conns: [] };
+  // 新建对象时自动放一个「当开始运行」帽子节点（只在此处添加一次，打开编辑器不会重复生成）
+  obj.graph = { nodes: [{ id: nextNodeId++, type: 'whenStart', p: {}, x: 30, y: 30 }], conns: [] };
   obj.vars = []; // 对象级变量列表（每个实例有独立的值）
+  obj.arrs = []; // 对象级数组变量列表
   state.objects.push(obj);
   objCanvases.set(obj.id, buildObjectCanvas(obj));
   renderNodePanel();
@@ -796,17 +1751,12 @@ function commitNodeSelect() {
   const li = state.activeLayer;
   const reg = extractRegion(li, x0, y0, x1, y1);
   if (!reg) { alert('框选区域内没有像素。'); return; }
-  const keysToDel = [];
-  for (const key of state.layers[li].pixels.keys()) {
-    const i = key.indexOf(',');
-    const x = +key.slice(0, i), y = +key.slice(i + 1);
-    if (x >= x0 && x <= x1 && y >= y0 && y <= y1) keysToDel.push(key);
-  }
+  // 剪切：框选区域内所有「显示像素」清除（图片模式 = 挖洞，普通图层 = 删除）
   beginStroke();
-  for (const key of keysToDel) {
-    recordCell(key, state.layers[li].pixels.get(key), null, li);
-    state.layers[li].pixels.delete(key);
-  }
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++) {
+      if (displayColor(state.layers[li], x, y)) paintCellRaw(x + ',' + y, null);
+    }
   endStroke();
   markDirtyRect(x0, y0, x1, y1, li);
   const oid = nextObjId++;
@@ -818,7 +1768,9 @@ function commitNodeSelect() {
     pixels: reg.pixels,
   });
   fillNodeCatSelect();
+  window.__nodeEditorOpen = true;
   els.nodePanel.classList.add('open');
+  raiseSidePanel(els.nodePanel);
   selectObject(idx); // 自动选中新对象，方便直接加节点 / 建变量 / 实例化
   requestRender();
 }
@@ -831,7 +1783,9 @@ function createObjectFromLayer(li) {
     selObjIdx = state.objects.indexOf(existing);
     fillNodeCatSelect();
     renderNodePanel();
-    els.nodePanel.classList.add('open');
+    window.__nodeEditorOpen = true;
+  els.nodePanel.classList.add('open');
+  raiseSidePanel(els.nodePanel);
     return;
   }
   const reg = extractRegion(li, -Infinity, -Infinity, Infinity, Infinity);
@@ -844,7 +1798,9 @@ function createObjectFromLayer(li) {
   });
   selObjIdx = state.objects.length - 1;
   fillNodeCatSelect();
+  window.__nodeEditorOpen = true;
   els.nodePanel.classList.add('open');
+  raiseSidePanel(els.nodePanel);
   if (typeof renderLayerPanel === 'function') renderLayerPanel(); // 更新图层图标
 }
 
@@ -857,9 +1813,19 @@ function instantiateObject(objIdx) {
   const obj = state.objects[objIdx];
   if (!obj) return;
   const li = state.activeLayer;
+  // 实例的 st 复制对象初始数组值与变量默认值（每个实例独立）
+  const st = {};
+  if (obj.vars && obj.vars.length) {
+    st.vars = {};
+    for (const v of obj.vars) if (v && (v.name || typeof v === 'string')) st.vars[(v.name || v)] = (v && v.value !== undefined) ? v.value : 0;
+  }
+  if (obj.arrs && obj.arrs.length) {
+    st.arrs = {};
+    for (const a of obj.arrs) if (a && a.name) st.arrs[a.name] = Array.isArray(a.values) ? a.values.map(function (g) { return Array.isArray(g) ? g.slice() : g; }) : [];
+  }
   state.instances.push({
     id: nextInstId++, objectIdx: objIdx,
-    x: obj.srcX, y: obj.srcY, st: {}, layerIdx: li,
+    x: obj.srcX, y: obj.srcY, st: st, layerIdx: li,
   });
   if (state.layers[li] && !state.layers[li].visible) { // 隐藏图层自动显示，保证实例可见
     state.layers[li].visible = true;
@@ -871,7 +1837,12 @@ function instantiateObject(objIdx) {
 }
 function deleteInstance(id) {
   const i = state.instances.findIndex(function (it) { return it.id === id; });
-  if (i >= 0) state.instances.splice(i, 1);
+  if (i >= 0) {
+    // 删除实例时停止其正在播放的声音（并清除挂起的等待恢复）
+    const s = state.instances[i].st && state.instances[i].st.sound;
+    if (s && s.src) { try { s.src.stop(); } catch (e) {} s.playing = false; s.src = null; s.gain = null; s.resume = null; }
+    state.instances.splice(i, 1);
+  }
   if (selInstId === id) selInstId = -1;
   renderNodePanel();
   requestRender();
@@ -900,6 +1871,8 @@ function trySelectInstance(gx, gy) {
 // 实例渲染（pixel-canvas.js 的 render() 调用）：只画可见图层的实例；选中实例画高亮框
 function drawInstances(p, li) {
   if (state.instances.length === 0) return;
+  // 保护：仅在像素画布环境（有 canvas/ctx）绘制；矢量画布等环境无像素画布时直接跳过，避免报错
+  if (typeof canvas === 'undefined' || typeof ctx === 'undefined') return;
   const s = state.scale;
   ctx.setTransform(p * s, 0, 0, p * s, p * state.offsetX, p * state.offsetY);
   ctx.imageSmoothingEnabled = s < 1;
@@ -928,6 +1901,13 @@ function drawInstances(p, li) {
 // ===================================================================
 function findConn(g, toNode, toSock) {
   for (const c of g.conns) if (c.to === toNode && c.toSock === toSock) return c;
+  // 兼容旧版：ifCond 的「条件」端口以前叫 c0（旧 JSON 工程），找不到 cond 时回退
+  if (toSock === 'cond') {
+    const node = g.nodes.find(function (n) { return n.id === toNode; });
+    if (node && node.type === 'ifCond') {
+      for (const c of g.conns) if (c.to === toNode && c.toSock === 'c0') return c;
+    }
+  }
   return null;
 }
 // 求某节点的全部数据输入（含 ifCond 动态条件端口）
@@ -942,7 +1922,7 @@ function evalInputs(g, nodeId, inst, cache, visiting) {
     if (grp) {
       for (const pin of grp.inputs) {
         const src = findConn(g, nodeId, pin.extKey);
-        inputs[pin.extKey] = src ? nodeValue(g, src.from, inst, cache, visiting) : null;
+        inputs[pin.extKey] = src ? nodeValue(g, src.from, inst, cache, visiting, src.fromSock) : null;
       }
     }
     return inputs;
@@ -957,33 +1937,17 @@ function evalInputs(g, nodeId, inst, cache, visiting) {
           const grp = GROUPS[sn.p && sn.p.group];
           inputs[sock.key] = grp ? groupOutValue(grp, src.fromSock, sn, inst, g) : null;
         } else {
-          inputs[sock.key] = nodeValue(g, src.from, inst, cache, visiting);
+          inputs[sock.key] = nodeValue(g, src.from, inst, cache, visiting, src.fromSock);
         }
       } else {
         inputs[sock.key] = null;
       }
     }
   }
-  if (node.type === 'ifCond' && node.p && node.p.conds) { // 动态条件端口
-    for (const ck of node.p.conds) {
-      const src = findConn(g, nodeId, ck);
-      if (src) {
-        const sn = g.nodes.find(function (n) { return n.id === src.from; });
-        if (sn && sn.type === 'groupRef') {
-          const grp = GROUPS[sn.p && sn.p.group];
-          inputs[ck] = grp ? groupOutValue(grp, src.fromSock, sn, inst, g) : null;
-        } else {
-          inputs[ck] = nodeValue(g, src.from, inst, cache, visiting);
-        }
-      } else {
-        inputs[ck] = null;
-      }
-    }
-  }
   return inputs;
 }
 // 数据节点求值（缓存 + 环保护），数据链路与执行链共用
-function nodeValue(g, nodeId, inst, cache, visiting) {
+function nodeValue(g, nodeId, inst, cache, visiting, fromSock) {
   if (cache.has(nodeId)) return cache.get(nodeId);
   if (visiting.has(nodeId)) return null; // 环路保护
   const node = g.nodes.find(function (n) { return n.id === nodeId; });
@@ -993,14 +1957,18 @@ function nodeValue(g, nodeId, inst, cache, visiting) {
   visiting.add(nodeId);
   const inputs = evalInputs(g, nodeId, inst, cache, visiting);
   let val = null;
-  try { val = def.value(inputs, inst, node.p || {}, inst.st); } catch (e) { val = null; }
+  try { val = def.value(inputs, inst, node.p || {}, inst.st, fromSock); } catch (e) { val = null; }
   visiting.delete(nodeId);
   cache.set(nodeId, val);
+  if (def.displayVal) updateNodeDisplay(node, val); // 【显示值】类节点：节点上实时显示求值结果
   return val;
 }
 // ---- 执行流（Scratch 式：帽子节点 → 沿 flow 连线链式执行） ----
-function findFlow(g, nodeId) {
-  for (const c of (g.flows || [])) if (c.from === nodeId) return c.to;
+function findFlow(g, nodeId, fromSock) {
+  const want = fromSock || 'then';
+  for (const c of (g.flows || [])) {
+    if (c.from === nodeId && (c.fromSock || 'then') === want) return c.to;
+  }
   return null;
 }
 function execFlow(g, nodeId, inst, depth) {
@@ -1013,6 +1981,32 @@ function execFlow(g, nodeId, inst, depth) {
   const visiting = new Set();
   const inputs = evalInputs(g, nodeId, inst, cache, visiting);
   if (def.run) { try { def.run(inputs, inst, node.p || {}, inst.st); } catch (e) { /* 节点错误跳过 */ } }
+  // 【显示值】类节点挂在动作链上：显示输入值（print 节点等）
+  if (def.displayVal) updateNodeDisplay(node, inputs.v);
+  // 阻塞节点：等待A秒 / 等待(事件A) —— 条件未满足时本帧暂停链，下帧继续
+  if (def.flowBlock === 'waitSec') {
+    if (!inst.st.waitUntil) inst.st.waitUntil = performance.now() + Math.max(0, (inputs.sec === null || inputs.sec === undefined ? ((node.p || {}).sec2 || 0) : inputs.sec)) * 1000;
+    if (performance.now() < inst.st.waitUntil) return;
+    inst.st.waitUntil = 0;
+  } else if (def.flowBlock === 'waitMsg') {
+    if (inst.st.waitMsg && !inst.st.waitMsgGot) return;
+    inst.st.waitMsg = ''; inst.st.waitMsgGot = false;
+  } else if (def.flowBlock === 'waitTimer') {
+    // 等待计时器到达「等待时间」秒
+    const t = (inputs.sec === null || inputs.sec === undefined) ? ((node.p || {}).sec2 || 0) : inputs.sec;
+    if (sceneTimer < t) return;
+  }
+  // 阻塞节点（如「播放声音A等待播放完毕」）：对应声音还在播放时暂停执行链，
+  // 挂起 resume 信息（恢复点 = 本节点的下一个节点），由 playSound 的 onended 在播放完毕时继续
+  if (def.blockSound) {
+    const s = inst.st.sound;
+    const want = (node.p || {}).sound;
+    if (want && s && s.name === want && s.playing) {
+      inst.st.flowPaused = { graph: g, nodeId: findFlow(g, node.id), inst: inst };
+      s.resume = inst.st.flowPaused;
+      return;
+    }
+  }
   if (inst.st.stopSelf || !state.nodesRunning) return; // 停止当前脚本 / 停止全部执行：立即中断本链
   const next = findFlow(g, node.id);
   if (def.flow === 'repeat') {
@@ -1021,9 +2015,10 @@ function execFlow(g, nodeId, inst, depth) {
     if (!isFinite(n)) { if (next) execFlow(g, next, inst, depth + 1); } // 次数未连=无限：每帧执行一次循环体
     else { for (let i = 0; i < n; i++) { if (next) execFlow(g, next, inst, depth + 1); } }
   } else if (def.flow === 'ifCond') {
-    let any = false;
-    for (const ck of (node.p.conds || [])) { if (inputs[ck]) { any = true; break; } }
-    if (any && next) execFlow(g, next, inst, depth + 1);
+    // 条件为真（非 0）→ 执行右侧连出的链
+    const v = inputs.cond;
+    const truthy = (v !== null && v !== undefined && v !== 0 && !(typeof v === 'number' && isNaN(v)));
+    if (truthy && next) execFlow(g, next, inst, depth + 1);
   } else if (next) {
     execFlow(g, next, inst, depth + 1);
   }
@@ -1032,6 +2027,7 @@ function evalGraph(obj, inst) {
   const g = obj.graph;
   if (!g) return;
   if (inst.st.stopSelf) return; // 停止当前脚本：该实例不再执行任何链
+  if (inst.st.flowPaused && inst.st.flowPaused.graph === g) return; // 「等待播放完毕」暂停中：声音播完后由 onended 恢复执行链
   // 节点组（groupRef）：递归执行被引用组的内图（组内 hats/动作照常）
   for (const node of g.nodes) {
     if (node.type !== 'groupRef') continue;
@@ -1064,6 +2060,14 @@ function evalGraph(obj, inst) {
       if (down && !prev) execFlow(g, node.id, inst, 0); // 按下瞬间触发一次
     } else if (def.hat === 'click') {
       if (inst.st.clicked) { inst.st.clicked = false; execFlow(g, node.id, inst, 0); }
+    } else if (def.hat === 'cond') {
+      // 当(音量/计时器)>A：条件从假变真触发一次
+      const np = node.p || {};
+      const val = np.source === 'timer' ? sceneTimer : getVolume();
+      const above = val > (np.th || 0);
+      const prev = !!inst.st.condPrev;
+      inst.st.condPrev = above;
+      if (above && !prev) execFlow(g, node.id, inst, 0);
     }
   }
 }
@@ -1073,18 +2077,58 @@ let lastTick = 0;
 let frameCount = 0;
 function nodeTick(now) {
   requestAnimationFrame(nodeTick);
-  if (!state.nodesRunning || state.instances.length === 0) return;
+  if (!state.nodesRunning) return;
   lastTick = lastTick || now;
   const dt = Math.min(50, now - lastTick);
   lastTick = now;
   if (dt <= 0) return;
+  sceneTimer += dt / 1000; // 全局计时器累加
   frameCount++;
+  // print 节点显示：不依赖实例存在。只要画布上有对象+节点图，就求值 print 的输入并更新显示框。
+  // （使用一个"虚拟实例"求值：变量等基于 st 的节点在无实例时取默认值，其余按图求值）
+  for (let oi = 0; oi < state.objects.length; oi++) {
+    const obj = state.objects[oi];
+    if (!obj || !obj.graph || !obj.graph.nodes) continue;
+    for (const pn of obj.graph.nodes) {
+      const pdef = NODE_TYPES[pn.type];
+      if (pdef && pdef.printVal) {
+        try {
+          const pcache = new Map(), pvisiting = new Set();
+          // 无实例时用占位实例求值（st 为空对象）
+          const pin = evalInputs(obj.graph, pn.id, { st: {}, objectIdx: oi }, pcache, pvisiting);
+          updateNodeDisplay(pn, pin.v);
+        } catch (e) { /* 忽略 */ }
+      }
+    }
+  }
   for (const inst of state.instances) {
     const li = inst.layerIdx === undefined ? 0 : inst.layerIdx;
     if (!state.layers[li] || !state.layers[li].visible) continue; // 隐藏图层：实例停止
     const obj = state.objects[inst.objectIdx];
     if (!obj) continue;
     try { evalGraph(obj, inst); } catch (e) { /* 节点执行出错跳过本帧 */ }
+    // 实例存在时：print 用实例真实状态求值（变量等反映实例值），覆盖上面的占位求值
+    if (obj.graph && obj.graph.nodes) {
+      for (const pn of obj.graph.nodes) {
+        const pdef = NODE_TYPES[pn.type];
+        if (pdef && pdef.printVal) {
+          try {
+            const pcache = new Map(), pvisiting = new Set();
+            const pin = evalInputs(obj.graph, pn.id, inst, pcache, pvisiting);
+            updateNodeDisplay(pn, pin.v);
+          } catch (e) { /* 忽略 */ }
+        }
+      }
+    }
+    // 通用实例步进钩子（画笔插件等：实例位置更新后自动绘制像素）
+    if (window.penAPI && window.penAPI.runStepHooks) {
+      try { window.penAPI.runStepHooks(obj, inst); } catch (e) { /* 钩子错误忽略 */ }
+    }
+  }
+  // 帧末统一清理标记删除的实例（deleteSelf / deleteObjInst 用 st._dead 标记）
+  if (state.instances.some(function (it) { return it.st && it.st._dead; })) {
+    state.instances = state.instances.filter(function (it) { return !(it.st && it.st._dead); });
+    if (typeof renderNodePanel === 'function') renderNodePanel(); // 实例列表同步
   }
   requestRender();
 }
@@ -1116,6 +2160,7 @@ function deleteObject(idx) {
   selNodeIdx = -1;
   selInstId = -1;
   renderNodePanel();
+  if (typeof renderVarUI === 'function') renderVarUI();
   requestRender();
 }
 
@@ -1215,20 +2260,60 @@ function zoomGraph(factor) {
   renderNodeGraph();
 }
 
+let nodeValEls = new Map(); // 节点id → 值显示元素（renderNodeGraph 重建）
+// 把任意值强制序列化为人类可读文本（print 节点的核心：数据透视与类型转换）
+function serializePrint(val) {
+  if (val === null || val === undefined) return 'null';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'boolean') return val ? 'true' : 'false';
+  if (typeof val === 'number') {
+    if (isNaN(val)) return 'NaN';
+    if (!isFinite(val)) return val > 0 ? '∞' : '-∞';
+    return String(Math.round(val * 100000) / 100000);
+  }
+  if (typeof val === 'object') {
+    try {
+      // 向量 {x,y} → "vec(x, y)"；数组 → "[1,2,3]"；其他对象 → JSON
+      if (val && typeof val.x === 'number' && typeof val.y === 'number' &&
+          Object.keys(val).length === 2) {
+        return 'vec(' + Math.round(val.x * 1000) / 1000 + ', ' + Math.round(val.y * 1000) / 1000 + ')';
+      }
+      const s = JSON.stringify(val);
+      return s === undefined ? 'undefined' : s;
+    } catch (e) { return String(val); }
+  }
+  return String(val);
+}
+function updateNodeDisplay(node, val) {
+  const el = nodeValEls.get(node.id);
+  if (!el) return;
+  let txt;
+  if (NODE_TYPES[node.type] && NODE_TYPES[node.type].printVal) {
+    // 打印节点：完整序列化（不截断/不加引号）
+    txt = serializePrint(val);
+    if (txt.length > 200) txt = txt.slice(0, 199) + '…';
+  } else if (val === null || val === undefined) {
+    txt = '—';
+  } else if (typeof val === 'string') {
+    txt = '"' + val + '"';
+  } else if (typeof val === 'boolean') {
+    txt = val ? '真(1)' : '假(0)';
+  } else {
+    txt = String(Math.round(val * 1000) / 1000);
+    if (txt.length > 20) txt = txt.slice(0, 19) + '…';
+  }
+  el.textContent = txt;
+}
 function renderNodeGraph() {
   const target = graphTarget();
+  nodeValEls = new Map();
   target.innerHTML = '';
   connSvg = null;
   // 注意：不在这里清空 connStart/tempEnd——socket 按下起点后调用本函数重建 DOM 时，
   // 需要保留连线起点状态，最后由 drawTempConn() 基于 connStart 重画临时线。
-  const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
-  if (!obj) {
-    target.innerHTML = '<div class="n-note" style="padding:10px">先在左侧选择一个对象，再用下方按钮添加节点</div>';
-    return;
-  }
-  const g = currentGraph();
+  const g = currentGraph(); // 主图或展开编辑的组内图
   if (!g) {
-    target.innerHTML = '<div class="n-note" style="padding:10px">先在左侧选择一个对象，或用「节点组」分类展开组</div>';
+    target.innerHTML = '<div class="n-note" style="padding:10px">' + (graphEditGroup ? '节点组不存在' : '先在左侧选择一个对象，或用「节点组」分类展开组') + '</div>';
     return;
   }
   // 视口层：所有节点与连线都在其中，随画布缩放/平移
@@ -1252,11 +2337,26 @@ function renderNodeGraph() {
     const def = NODE_TYPES[node.type];
     if (!def) continue;
     const el = document.createElement('div');
+    // 右键编辑 JS：仅「自制/插件」分类节点可编辑；节点定义加 noEdit:true 可锁定（不能右键编辑）
+    el.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (NODE_DEF_SRC[node.type] && (def.category === '自制' || pluginNodeIds.has(node.type)) && !def.noEdit) {
+        openNodeJsEditor(NODE_DEF_SRC[node.type], '编辑节点「' + def.name + '」的 JS');
+      }
+    });
     el.className = 'node-gnode' + (node.id === selNodeIdx || selNodeSet.has(node.id) ? ' sel' : '') + (node.type === 'groupRef' ? ' group' : '');
     el.style.left = (node.x || 20) + 'px';
     el.style.top = (node.y || 20) + 'px';
     const head = document.createElement('div');
     head.className = 'ng-head';
+    // 节点头部按所属类型着色（如事件=黄、运动=蓝、控制=橙）
+    const catCol = NODE_CATS[def.category];
+    if (catCol) {
+      head.style.background = catCol;
+      head.style.borderColor = catCol;
+      head.style.color = '#1c1e24'; // 分类色背景用深色文字保证可读
+    }
     head.innerHTML = '<span>' + escapeHtml(def.name) + '</span><span class="ng-del" title="删除此节点">×</span>';
     // 执行流端口对称放节点顶部：左侧 = 入口（in，从上一步来），右侧 = 出口（out，去下一步）
     if (def.flowIn) head.insertBefore(flowEl(node.id, 'in'), head.firstChild);
@@ -1282,6 +2382,7 @@ function renderNodeGraph() {
         dragNode = { id: node.id, dx: w.x - (node.x || 20), dy: w.y - (node.y || 20) };
         selNodeSet = new Set([node.id]); // 未多选：按下即单选
         selNodeIdx = node.id;
+        if (typeof renderVarUI === 'function') renderVarUI(); // 选中节点 → 变量/数组列表显示实例当前值预览
       }
     });
     // 节点组：双击展开编辑组内图
@@ -1329,6 +2430,7 @@ function renderNodeGraph() {
           const label = document.createElement('label');
           label.textContent = prm.label;
           const sel = document.createElement('select');
+          if (def.category === '声音') sel.style.fontSize = '10px'; // 声音下拉（含「未导入声音」选项）调小
           const opts = prm.options ? prm.options() : [];
           for (const o of opts) {
             const opt = document.createElement('option');
@@ -1356,31 +2458,55 @@ function renderNodeGraph() {
           sel.addEventListener('change', function () { node.p[prm.key] = sel.value; });
           row.appendChild(label);
           row.appendChild(sel);
+        } else if (prm.type === 'color') {
+          const label = document.createElement('label');
+          label.textContent = prm.label;
+          const inp = document.createElement('input');
+          inp.type = 'color';
+          inp.value = node.p[prm.key] === undefined ? (prm.def || '#000000') : node.p[prm.key];
+          inp.style.width = '36px';
+          inp.style.padding = '0';
+          inp.addEventListener('input', function () { node.p[prm.key] = inp.value; });
+          row.appendChild(label);
+          row.appendChild(inp);
+        } else if (prm.type === 'text') {
+          const label = document.createElement('label');
+          label.textContent = prm.label;
+          const inp = document.createElement('input');
+          inp.type = 'text';
+          inp.value = node.p[prm.key] === undefined ? (prm.def == null ? '' : prm.def) : node.p[prm.key];
+          inp.style.width = '140px';
+          inp.addEventListener('input', function () { node.p[prm.key] = inp.value; });
+          row.appendChild(label);
+          row.appendChild(inp);
+        }
+        if (prm.out) {
+          const se = socketEl(node.id, { key: prm.out, type: 'num', label: '' }, 'out');
+          se.classList.add('inline'); // 内联端口：绝对定位在节点右缘，不占行宽
+          row.appendChild(se);
         }
         el.appendChild(row);
       }
     }
     for (const sock of (def.sockets || [])) {
       if (sock.dir !== 'out') continue;
+      if (def.params && def.params.some(function (p) { return p.out === sock.key; })) continue; // 已在参数行右侧内联，避免重复
       el.appendChild(socketEl(node.id, sock, 'out'));
     }
-    // 条件判断：动态条件端口（左侧）+ ➕ 条件按钮
-    if (node.type === 'ifCond') {
-      if (!node.p.conds) node.p.conds = ['c0'];
-      for (const ck of node.p.conds) el.appendChild(socketEl(node.id, ck, 'in'));
-      const addRow = document.createElement('div');
-      addRow.className = 'ng-row ng-add-cond';
-      const btn = document.createElement('button');
-      btn.className = 'btn';
-      btn.textContent = '➕ 条件';
-      btn.title = '添加一个条件端口';
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        node.p.conds.push('c' + node.p.conds.length);
-        renderNodeGraph();
-      });
-      addRow.appendChild(btn);
-      el.appendChild(addRow);
+    // 【显示值】类节点：「值」显示框（显示上一个连接的节点输出的值）；print 节点用大显示框
+    if (def.displayVal) {
+      const dv = document.createElement('div');
+      dv.className = 'node-val' + (def.printVal ? ' node-val-print' : '');
+      const lb = document.createElement('span');
+      lb.className = 'nv-label';
+      lb.textContent = def.printVal ? '🖨 输出' : '值';
+      const bx = document.createElement('span');
+      bx.className = 'nv-box';
+      bx.textContent = '—';
+      dv.appendChild(lb);
+      dv.appendChild(bx);
+      el.appendChild(dv);
+      nodeValEls.set(node.id, bx);
     }
     // 执行流出口（右侧连接点）→ 已移到节点顶部右侧（与入口对称）
     el.addEventListener('click', function (e) {
@@ -1409,19 +2535,23 @@ function renderNodeGraph() {
     target.appendChild(box);
   }
 }
-// 执行流端口（连接点：in=入口/左侧，out=出口/右侧）
-function flowEl(nodeId, dir) {
+// 执行流端口（连接点：in=入口/左侧，out=出口/右侧；fsock：出口分支，如 ifCond 的 then/else）
+function flowEl(nodeId, dir, fsock) {
   const el = document.createElement('div');
   el.className = 'node-flow ' + dir;
   el.dataset.nodeId = nodeId;
   el.dataset.flow = '1';
   el.dataset.dir = dir;
-  el.title = dir === 'out' ? '执行流出口：拖到下一个节点的入口（绿色线）' : '执行流入口：从上一步连接（绿色线）';
+  el.dataset.fsock = fsock || 'then';
+  el.title = dir === 'out'
+    ? (fsock ? (fsock === 'else' ? '条件不满足时执行此链（else 分支）' : '条件满足时执行此链（then 分支）') : '执行流出口：拖到下一个节点的入口（绿色线）')
+    : '执行流入口：从上一步连接（绿色线）';
+  if (dir === 'out' && fsock) el.textContent = fsock === 'else' ? '❌否' : '✅是';
   el.addEventListener('pointerdown', function (e) {
     e.stopPropagation();
     e.preventDefault();
     if (dir === 'out') {
-      connStart = { nodeId: nodeId, sock: '__flow__', type: 'flow' };
+      connStart = { nodeId: nodeId, sock: '__flow__', type: 'flow', dir: dir, fsock: fsock || 'then' };
       const w = toWorld(e.clientX, e.clientY);
       tempEnd = { x: w.x, y: w.y };
       if (connSvg) {
@@ -1477,7 +2607,12 @@ function collectPorts() {
     const rect = s.getBoundingClientRect();
     const isFlow = s.classList && s.classList.contains('node-flow');
     // flow 端口必须区分方向：同一节点的入口/出口坐标不同，key 混用会导致出口覆盖入口
-    const key = isFlow ? 'f:' + s.dataset.nodeId + ':' + s.dataset.dir : s.dataset.nodeId + ':' + s.dataset.sock;
+    // 且出口按分支（fsock: then/else）区分，支持 ifCond 的双出口
+    const key = isFlow
+      ? (s.dataset.dir === 'out'
+        ? 'f:' + s.dataset.nodeId + ':out' + (s.dataset.fsock ? ':' + s.dataset.fsock : '')
+        : 'f:' + s.dataset.nodeId + ':in')
+      : s.dataset.nodeId + ':' + s.dataset.sock;
     // 连线端点对齐到圆点（.dot）中心，而不是端口行中心（否则线头偏离圆圈）
     const dot = s.querySelector('.dot');
     let cx = rect.left - cRect.left + rect.width / 2;
@@ -1495,12 +2630,18 @@ function collectPorts() {
   return ports;
 }
 function drawConns() {
-  const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
-  if (!obj || !obj.graph || !connSvg) return;
+  const g = currentGraph(); // 展开组编辑时画组内连线
+  if (!g || !connSvg) return;
   const ports = collectPorts();
-  obj.graph.conns.forEach(function (c) {
+  g.conns.forEach(function (c) {
     const a = ports[c.from + ':' + c.fromSock];
-    const b = ports[c.to + ':' + c.toSock];
+    // 兼容旧版：ifCond 条件端口 c0 → 现在叫 cond
+    let toKey = c.toSock;
+    if (toKey === 'c0') {
+      const tn = g.nodes.find(function (n) { return n.id === c.to; });
+      if (tn && tn.type === 'ifCond') toKey = 'cond';
+    }
+    const b = ports[c.to + ':' + toKey];
     if (!a || !b) return;
     const path = document.createElementNS(svgNS, 'path');
     const mx = (a.x + b.x) / 2;
@@ -1508,9 +2649,9 @@ function drawConns() {
     path.setAttribute('class', 'conn');
     path.addEventListener('click', function (e) {
       e.stopPropagation();
-      const o2 = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
-      if (o2 && o2.graph) {
-        o2.graph.conns = o2.graph.conns.filter(function (cc) { return cc !== c; });
+      const g2 = currentGraph();
+      if (g2) {
+        g2.conns = g2.conns.filter(function (cc) { return cc !== c; });
         renderNodeGraph();
       }
     });
@@ -1519,8 +2660,8 @@ function drawConns() {
 }
 // 执行流连线（绿色粗线 + 方向箭头）
 function drawFlowConns() {
-  const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
-  if (!obj || !obj.graph || !connSvg) return;
+  const g = currentGraph(); // 展开组编辑时画组内执行流连线
+  if (!g || !connSvg) return;
   // 方向箭头 marker（每次 svg 重建后重新添加）
   if (!connSvg.querySelector('marker')) {
     const mk = document.createElementNS(svgNS, 'marker');
@@ -1536,8 +2677,10 @@ function drawFlowConns() {
     connSvg.appendChild(mk);
   }
   const ports = collectPorts();
-  (obj.graph.flows || []).forEach(function (c) {
-    const a = ports['f:' + c.from + ':out'];
+  (g.flows || []).forEach(function (c) {
+    // 出口按分支（fromSock: then/else）匹配端口；旧格式（无 fromSock）匹配主出口
+    const fromKey = 'f:' + c.from + ':out' + (c.fromSock ? ':' + c.fromSock : '');
+    const a = ports[fromKey];
     const b = ports['f:' + c.to + ':in'];
     if (!a || !b) return;
     const path = document.createElementNS(svgNS, 'path');
@@ -1547,9 +2690,9 @@ function drawFlowConns() {
     path.setAttribute('marker-end', 'url(#flowArrow)');
     path.addEventListener('click', function (e) {
       e.stopPropagation();
-      const o2 = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
-      if (o2 && o2.graph) {
-        o2.graph.flows = (o2.graph.flows || []).filter(function (cc) { return cc !== c; });
+      const g2 = currentGraph();
+      if (g2) {
+        g2.flows = (g2.flows || []).filter(function (cc) { return cc !== c; });
         renderNodeGraph();
       }
     });
@@ -1559,44 +2702,91 @@ function drawFlowConns() {
 function drawTempConn() {
   if (!connStart || !tempEnd || !connSvg) return;
   const ports = collectPorts();
-  const a = ports[connStart.nodeId + ':' + connStart.sock];
+  // 执行流端口在 collectPorts 中的 key 带 'f:' 前缀和方向（如 'f:3:out'），
+  // 数据端口 key = '节点id:端口key'——按类型分别查找，否则 flow 临时线起点查不到
+  const key = connStart.type === 'flow'
+    ? 'f:' + connStart.nodeId + ':' + (connStart.dir || 'out') + (connStart.fsock ? ':' + connStart.fsock : '')
+    : connStart.nodeId + ':' + connStart.sock;
+  const a = ports[key];
   if (!a) return;
   const path = document.createElementNS(svgNS, 'path');
   const mx = (a.x + tempEnd.x) / 2;
   path.setAttribute('d', 'M ' + a.x + ' ' + a.y + ' C ' + mx + ' ' + a.y + ', ' + mx + ' ' + tempEnd.y + ', ' + tempEnd.x + ' ' + tempEnd.y);
-  path.setAttribute('class', 'temp');
+  path.setAttribute('class', connStart.type === 'flow' ? 'temp flow-temp' : 'temp');
   connSvg.appendChild(path);
 }
 // 连线 / 节点增删
 function addConn(fromNode, fromSock, toNode, toSock) {
-  const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
-  if (!obj) return;
-  const g = ensureGraph(obj);
+  const g = currentGraph(); // 展开组编辑时连线写入组内图
+  if (!g) return;
   g.conns = g.conns.filter(function (c) { return !(c.to === toNode && c.toSock === toSock); }); // 同输入端口只留一条
   g.conns.push({ from: fromNode, fromSock: fromSock, to: toNode, toSock: toSock });
   renderNodeGraph();
 }
 // 执行流连线：from（出口）→ to（入口）；每个节点出口只连一条（重复连线替换）
-function addFlowConn(fromNode, toNode) {
-  const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
-  if (!obj) return;
-  const g = ensureGraph(obj);
+function addFlowConn(fromNode, toNode, fromSock) {
+  const g = currentGraph();
+  if (!g) return;
   if (!g.flows) g.flows = [];
-  g.flows = g.flows.filter(function (c) { return c.from !== fromNode; });
-  g.flows.push({ from: fromNode, to: toNode });
+  // 同一节点同一出口分支只保留一条出链；不同分支（then/else）互不覆盖
+  g.flows = g.flows.filter(function (c) { return !(c.from === fromNode && (c.fromSock || 'then') === (fromSock || 'then')); });
+  g.flows.push({ from: fromNode, to: toNode, fromSock: fromSock || 'then' });
   renderNodeGraph();
 }
 function removeFlowConn(toNode) {
-  const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
-  if (!obj || !obj.graph) return;
-  obj.graph.flows = (obj.graph.flows || []).filter(function (c) { return c.to !== toNode; });
+  const g = currentGraph();
+  if (!g) return;
+  g.flows = (g.flows || []).filter(function (c) { return c.to !== toNode; });
 }
 function removeConnTo(toNode, toSock) {
-  const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
-  if (!obj || !obj.graph) return;
-  obj.graph.conns = obj.graph.conns.filter(function (c) { return !(c.to === toNode && c.toSock === toSock); });
+  const g = currentGraph();
+  if (!g) return;
+  g.conns = g.conns.filter(function (c) { return !(c.to === toNode && c.toSock === toSock); });
+}
+// ---------- 节点图撤销 / 重做（右键菜单 + Ctrl+Z / Ctrl+Shift+Z） ----------
+let nodeHist = [];      // 撤销栈（操作前快照）
+let nodeRedo = [];      // 重做栈
+const NODE_HIST_MAX = 60;
+function nodeSnapshot() {
+  const g = currentGraph();
+  if (!g) return null;
+  return JSON.stringify({ nodes: g.nodes, conns: g.conns, flows: g.flows || [] });
+}
+function pushNodeHistory() {
+  const snap = nodeSnapshot();
+  if (snap === null) return;
+  nodeHist.push(snap);
+  if (nodeHist.length > NODE_HIST_MAX) nodeHist.shift();
+  nodeRedo = [];
+}
+function applyNodeSnapshot(snap) {
+  if (snap === null) return;
+  const g = currentGraph();
+  if (!g) return;
+  const d = JSON.parse(snap);
+  g.nodes = d.nodes;
+  g.conns = d.conns;
+  g.flows = d.flows || [];
+  selNodeSet = new Set();
+  selNodeIdx = -1;
+  if (typeof renderVarUI === 'function') renderVarUI();
+  hideNodeCtxMenu();
+  renderNodeGraph();
+}
+function undoNode() {
+  if (!nodeHist.length) return;
+  const snap = nodeHist.pop();
+  nodeRedo.push(nodeSnapshot());
+  applyNodeSnapshot(snap);
+}
+function redoNode() {
+  if (!nodeRedo.length) return;
+  const snap = nodeRedo.pop();
+  nodeHist.push(nodeSnapshot());
+  applyNodeSnapshot(snap);
 }
 function deleteGraphNode(id) {
+  pushNodeHistory();
   const g = currentGraph();
   if (!g) return;
   g.nodes = g.nodes.filter(function (n) { return n.id !== id; });
@@ -1604,6 +2794,100 @@ function deleteGraphNode(id) {
   g.flows = (g.flows || []).filter(function (c) { return c.from !== id && c.to !== id; });
   renderNodeGraph();
 }
+// ---------- 右键工具框（框选节点后，在鼠标位置弹出，可删除框选节点） ----------
+const nodeCtxMenu = document.getElementById('nodeCtxMenu');
+const nodeCtxDelete = document.getElementById('nodeCtxDelete');
+function hideNodeCtxMenu() { if (nodeCtxMenu) nodeCtxMenu.style.display = 'none'; }
+function showNodeCtxMenu(x, y) {
+  if (!nodeCtxMenu || !selNodeSet.size) { hideNodeCtxMenu(); return; }
+  nodeCtxMenu.style.display = 'block';
+  const w = nodeCtxMenu.offsetWidth || 130, hgt = nodeCtxMenu.offsetHeight || 30;
+  nodeCtxMenu.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
+  nodeCtxMenu.style.top = Math.min(y, window.innerHeight - hgt - 8) + 'px';
+  if (nodeCtxDelete) nodeCtxDelete.textContent = '🗑 删除框选节点（' + selNodeSet.size + '）';
+}
+function deleteSelNodes() {
+  pushNodeHistory();
+  const g = currentGraph();
+  if (!g || !selNodeSet.size) { hideNodeCtxMenu(); return; }
+  const ids = Array.from(selNodeSet);
+  g.nodes = g.nodes.filter(function (n) { return ids.indexOf(n.id) < 0; });
+  g.conns = g.conns.filter(function (c) { return ids.indexOf(c.from) < 0 && ids.indexOf(c.to) < 0; });
+  g.flows = (g.flows || []).filter(function (c) { return ids.indexOf(c.from) < 0 && ids.indexOf(c.to) < 0; });
+  selNodeSet = new Set();
+  selNodeIdx = -1;
+  if (typeof renderVarUI === 'function') renderVarUI();
+  hideNodeCtxMenu();
+  renderNodeGraph();
+}
+if (nodeCtxDelete) nodeCtxDelete.addEventListener('click', deleteSelNodes);
+// 右键菜单「打包为节点组」：直接对框选节点打包（无需切到节点组分类点打包）
+const nodeCtxPack = document.getElementById('nodeCtxPack');
+if (nodeCtxPack) nodeCtxPack.addEventListener('click', function () { packSelectedAsGroup(); hideNodeCtxMenu(); });
+// ---------- 节点复制 / 粘贴（框选后复制，粘贴到画布；快捷键 Ctrl+C / Ctrl+V） ----------
+let nodeClipboard = null; // { nodes, conns, flows }
+function copySelNodes() {
+  const g = currentGraph();
+  if (!g || !selNodeSet.size) return false;
+  const ids = Array.from(selNodeSet);
+  const nodes = g.nodes.filter(function (n) { return ids.indexOf(n.id) >= 0; }).map(function (n) { return JSON.parse(JSON.stringify(n)); });
+  const conns = g.conns.filter(function (c) { return ids.indexOf(c.from) >= 0 && ids.indexOf(c.to) >= 0; }).map(function (c) { return JSON.parse(JSON.stringify(c)); });
+  const flows = (g.flows || []).filter(function (c) { return ids.indexOf(c.from) >= 0 && ids.indexOf(c.to) >= 0; }).map(function (c) { return JSON.parse(JSON.stringify(c)); });
+  nodeClipboard = { nodes: nodes, conns: conns, flows: flows };
+  return true;
+}
+function pasteClipboard() {
+  pushNodeHistory();
+  const g = currentGraph();
+  if (!g || !nodeClipboard || !nodeClipboard.nodes.length) return;
+  const oldToNew = {};
+  const offset = 24;
+  for (const n of nodeClipboard.nodes) {
+    const nn = JSON.parse(JSON.stringify(n));
+    const newId = nextNodeId++;
+    oldToNew[n.id] = newId;
+    nn.id = newId;
+    nn.x = (nn.x || 20) + offset;
+    nn.y = (nn.y || 20) + offset;
+    g.nodes.push(nn);
+  }
+  for (const c of nodeClipboard.conns) g.conns.push({ from: oldToNew[c.from], fromSock: c.fromSock, to: oldToNew[c.to], toSock: c.toSock });
+  for (const f of nodeClipboard.flows || []) g.flows.push({ from: oldToNew[f.from], to: oldToNew[f.to] });
+  selNodeSet = new Set(Object.values(oldToNew));
+  selNodeIdx = selNodeSet.values().next().value;
+  if (typeof renderVarUI === 'function') renderVarUI();
+  hideNodeCtxMenu();
+  renderNodeGraph();
+}
+const nodeCtxCopy = document.getElementById('nodeCtxCopy');
+const nodeCtxPaste = document.getElementById('nodeCtxPaste');
+const nodeCtxUndo = document.getElementById('nodeCtxUndo');
+const nodeCtxRedo = document.getElementById('nodeCtxRedo');
+if (nodeCtxCopy) nodeCtxCopy.addEventListener('click', function () { copySelNodes(); hideNodeCtxMenu(); });
+if (nodeCtxPaste) nodeCtxPaste.addEventListener('click', function () { pasteClipboard(); hideNodeCtxMenu(); });
+if (nodeCtxUndo) nodeCtxUndo.addEventListener('click', function () { undoNode(); hideNodeCtxMenu(); });
+if (nodeCtxRedo) nodeCtxRedo.addEventListener('click', function () { redoNode(); hideNodeCtxMenu(); });
+// 快捷键：Ctrl+C 复制框选节点，Ctrl+V 粘贴（在节点画布区域且未在输入框中时）
+document.addEventListener('keydown', function (e) {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undoNode(); }
+  else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redoNode(); }
+  else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'c' || e.key === 'C')) { copySelNodes(); }
+  else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'v' || e.key === 'V')) { e.preventDefault(); pasteClipboard(); }
+});
+// 整个网站右键不再弹出浏览器默认菜单；节点/库按钮上的右键走各自原有逻辑（已 stopPropagation）
+document.addEventListener('contextmenu', function (e) {
+  e.preventDefault(); // 全局阻止浏览器默认右键菜单（另存为等）
+  const t = e.target;
+  const inCanvas = (t === els.nodeCanvas || els.nodeCanvas.contains(t)) || (t === els.scratchCanvas || els.scratchCanvas.contains(t));
+  if (!inCanvas) { hideNodeCtxMenu(); return; }
+  if (t.closest && t.closest('.node-gnode')) return; // 节点上右键：走节点原有逻辑
+  if (selNodeSet.size) { showNodeCtxMenu(e.clientX, e.clientY); }
+  else hideNodeCtxMenu();
+});
+document.addEventListener('click', function () { hideNodeCtxMenu(); });
+document.addEventListener('wheel', function () { hideNodeCtxMenu(); });
 // 画布交互：拖动节点 / 连线 / 平移 / 缩放（事件委托到 document）
 document.addEventListener('pointermove', function (e) {
   if (dragNode) {
@@ -1636,8 +2920,8 @@ document.addEventListener('pointermove', function (e) {
     graphSelEnd = { x: e.clientX, y: e.clientY };
     renderNodeGraph();
   } else if (stagePan) {
-    stageView.ox = e.clientX - stagePan.x;
-    stageView.oy = e.clientY - stagePan.y;
+    stageView.ox = stagePan.ox - (e.clientX - stagePan.x) / stagePan.s;
+    stageView.oy = stagePan.oy - (e.clientY - stagePan.y) / stagePan.s;
   } else if (connStart) {
     const w = toWorld(e.clientX, e.clientY);
     tempEnd = { x: w.x, y: w.y };
@@ -1707,16 +2991,18 @@ document.addEventListener('pointerup', function (e) {
           if (+s.dataset.nodeId !== connStart.nodeId) hit = s;
         }
       });
-      if (hit) addFlowConn(connStart.nodeId, +hit.dataset.nodeId);
+      if (hit) addFlowConn(connStart.nodeId, +hit.dataset.nodeId, connStart.fsock);
     } else {
       let hit = null;
       target.querySelectorAll('.node-socket.in').forEach(function (s) {
         const r = s.getBoundingClientRect();
         if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
-          if (+s.dataset.nodeId !== connStart.nodeId && s.dataset.type === connStart.type) hit = s;
+          // 类型匹配：'any' 端口可接受任意类型（打印节点等通用输入）
+          if (+s.dataset.nodeId !== connStart.nodeId &&
+              (s.dataset.type === connStart.type || s.dataset.type === 'any' || connStart.type === 'any')) hit = s;
         }
       });
-      if (hit) addConn(connStart.nodeId, connStart.sock, +hit.dataset.nodeId, hit.dataset.sock);
+      if (hit) { pushNodeHistory(); addConn(connStart.nodeId, connStart.sock, +hit.dataset.nodeId, hit.dataset.sock); }
     }
     connStart = null;
     tempEnd = null;
@@ -1738,6 +3024,18 @@ function fillNodeCatSelect() {
     opt.textContent = cat;
     els.nodeCatSelect.appendChild(opt);
   }
+  // 补充：插件/导入节点中出现的自定义分类（如画笔.js 的「画笔」），确保在小面板下拉可见
+  const seen = new Set(Object.keys(NODE_CATS).concat(['节点组']));
+  for (const t of Object.keys(NODE_TYPES)) {
+    const c = NODE_TYPES[t].category;
+    if (c && !seen.has(c)) {
+      seen.add(c);
+      const opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = c;
+      els.nodeCatSelect.appendChild(opt);
+    }
+  }
   // 「节点组」分类（打包好的子图，选择后可直接添加到画布）
   const gOpt = document.createElement('option');
   gOpt.value = '节点组';
@@ -1748,6 +3046,13 @@ function fillNodeCatSelect() {
 function fillNodeTypeSelect() {
   const cat = els.nodeCatSelect.value;
   els.nodeTypeSelect.innerHTML = '';
+  // 声音导入区只在选中「声音」分类时展开显示（导入声音属于声音类型节点库）
+  const sr = document.getElementById('soundRow');
+  if (sr) sr.style.display = (cat === '声音') ? 'flex' : 'none';
+  const ca = document.getElementById('btnNodeAddCustom');
+  const cs = document.getElementById('btnSaveCustom');
+  if (cs) cs.style.display = (cat === '自制') ? '' : 'none';
+  if (ca) ca.style.display = (cat === '自制') ? '' : 'none';
   if (cat === '节点组') { // 列出已保存的节点组
     for (const name of Object.keys(GROUPS)) {
       const opt = document.createElement('option');
@@ -1773,6 +3078,7 @@ function fillNodeTypeSelect() {
 }
 // 添加节点到当前图（展开组编辑时加到组内图）：graph.nodes 追加
 function addNodeToObject(type) {
+  pushNodeHistory();
   const g = currentGraph();
   if (!g) { alert('请先在左侧选择一个对象。'); return; }
   const realType = type.indexOf('groupRef:') === 0 ? 'groupRef' : type; // groupRef:组名 → 组引用节点
@@ -1794,6 +3100,11 @@ function addNodeToObject(type) {
 function packSelectedAsGroup() {
   const g = currentGraph();
   if (!g || selNodeSet.size < 2) { alert('请先在画布上框选至少 2 个节点。'); return; }
+  // 嵌套深度限制：最多 3 层（当前路径长度达到上限则禁止再打包）
+  if (graphEditGroup && graphEditGroup.length >= graphEditGroupMaxDepth) {
+    alert('节点组嵌套最多 ' + graphEditGroupMaxDepth + ' 层，已达到上限，不能再打包节点组。');
+    return;
+  }
   const name = prompt('节点组名称：');
   if (!name) return;
   const ids = new Set(selNodeSet);
@@ -1816,17 +3127,27 @@ function packSelectedAsGroup() {
   g.nodes.push({ id: nextNodeId++, type: 'groupRef', p: { group: name }, x: (minX + maxX) / 2 - 60, y: (minY + maxY) / 2 - 30 });
   selNodeSet = new Set();
   selNodeIdx = -1;
+  if (typeof renderVarUI === 'function') renderVarUI();
   renderNodeGraph();
   fillNodeCatSelect();
   alert('已打包为节点组「' + name + '」（输入 ' + io.inputs.length + ' / 输出 ' + io.outputs.length + '），可在「节点组」分类中添加使用，双击组节点可展开编辑。');
 }
-// 展开节点组：在画布上编辑组内图（增删节点/连线），完成后回到主图
+// 展开节点组：在画布上编辑组内图（增删节点/连线），支持嵌套层级路径
 function enterGroupEdit(name) {
   if (!GROUPS[name]) return;
-  graphEditGroup = name;
+  if (!graphEditGroup) graphEditGroup = [];
+  graphEditGroup.push(name); // 路径追加当前组
   if (els.groupEditName) els.groupEditName.textContent = name;
   if (els.groupEditRow) els.groupEditRow.style.display = 'flex';
   if (els.scratchGroupDone) els.scratchGroupDone.style.display = ''; // 全屏模式也提供「完成」按钮
+  // 组内打包 / 解包 / 保存按钮（仅在编辑节点组时显示）
+  const gp = document.getElementById('btnGroupPack'); if (gp) gp.style.display = '';
+  const gu = document.getElementById('btnGroupUnpack'); if (gu) gu.style.display = '';
+  const gs = document.getElementById('btnGroupSave'); if (gs) gs.style.display = '';
+  const sp = document.getElementById('scratchGroupPack'); if (sp) sp.style.display = '';
+  const su = document.getElementById('scratchGroupUnpack'); if (su) su.style.display = '';
+  const ss = document.getElementById('scratchGroupSave'); if (ss) ss.style.display = '';
+  renderGroupPath();
   graphView = { s: 1, ox: 30, oy: 30 };
   renderNodeGraph();
 }
@@ -1834,9 +3155,138 @@ function doneGroupEdit() {
   graphEditGroup = null;
   if (els.groupEditRow) els.groupEditRow.style.display = 'none';
   if (els.scratchGroupDone) els.scratchGroupDone.style.display = 'none';
+  const gp = document.getElementById('btnGroupPack'); if (gp) gp.style.display = 'none';
+  const gu = document.getElementById('btnGroupUnpack'); if (gu) gu.style.display = 'none';
+  const gs = document.getElementById('btnGroupSave'); if (gs) gs.style.display = 'none';
+  const sp = document.getElementById('scratchGroupPack'); if (sp) sp.style.display = 'none';
+  const su = document.getElementById('scratchGroupUnpack'); if (su) su.style.display = 'none';
+  const ss = document.getElementById('scratchGroupSave'); if (ss) ss.style.display = 'none';
+  renderGroupPath();
   renderNodeGraph();
   fillNodeCatSelect();
   if (scratchModeOn) { fillScratchCats(); fillScratchPalette(); }
+}
+// 返回上一级（路径弹出一个；只剩一层则回到主图）
+function backGroupLevel() {
+  if (graphEditGroup && graphEditGroup.length > 1) {
+    graphEditGroup.pop();
+  } else {
+    graphEditGroup = null;
+  }
+  const cur = graphEditGroup ? graphEditGroup[graphEditGroup.length - 1] : null;
+  if (els.groupEditName) els.groupEditName.textContent = cur || '';
+  if (cur) { /* 仍在组内 */ } else if (els.groupEditRow) els.groupEditRow.style.display = 'none';
+  if (!cur && els.scratchGroupDone) els.scratchGroupDone.style.display = 'none';
+  if (cur) { /* 解包/保存按钮保持 */ } else { hideGroupEditBtns(); }
+  renderGroupPath();
+  renderNodeGraph();
+}
+// 跳转到指定层级（点击路径中的组名）
+function gotoGroupLevel(depth) {
+  if (!graphEditGroup) return;
+  graphEditGroup = graphEditGroup.slice(0, depth);
+  const cur = graphEditGroup.length ? graphEditGroup[graphEditGroup.length - 1] : null;
+  if (els.groupEditName) els.groupEditName.textContent = cur || '';
+  if (cur) {
+    if (els.groupEditRow) els.groupEditRow.style.display = 'flex';
+    if (els.scratchGroupDone) els.scratchGroupDone.style.display = '';
+  } else {
+    if (els.groupEditRow) els.groupEditRow.style.display = 'none';
+    if (els.scratchGroupDone) els.scratchGroupDone.style.display = 'none';
+  }
+  if (cur) { showGroupEditBtns(); } else { hideGroupEditBtns(); }
+  renderGroupPath();
+  renderNodeGraph();
+}
+function showGroupEditBtns() {
+  const gp = document.getElementById('btnGroupPack'); if (gp) gp.style.display = '';
+  const gu = document.getElementById('btnGroupUnpack'); if (gu) gu.style.display = '';
+  const gs = document.getElementById('btnGroupSave'); if (gs) gs.style.display = '';
+  const sp = document.getElementById('scratchGroupPack'); if (sp) sp.style.display = '';
+  const su = document.getElementById('scratchGroupUnpack'); if (su) su.style.display = '';
+  const ss = document.getElementById('scratchGroupSave'); if (ss) ss.style.display = '';
+}
+function hideGroupEditBtns() {
+  const gp = document.getElementById('btnGroupPack'); if (gp) gp.style.display = 'none';
+  const gu = document.getElementById('btnGroupUnpack'); if (gu) gu.style.display = 'none';
+  const gs = document.getElementById('btnGroupSave'); if (gs) gs.style.display = 'none';
+  const sp = document.getElementById('scratchGroupPack'); if (sp) sp.style.display = 'none';
+  const su = document.getElementById('scratchGroupUnpack'); if (su) su.style.display = 'none';
+  const ss = document.getElementById('scratchGroupSave'); if (ss) ss.style.display = 'none';
+}
+// 解包当前节点组：把组内节点/连线放回父图（主图或上级组），并移除该组节点
+function unpackCurrentGroup() {  const g = currentGraph();
+  const cur = graphEditGroup ? graphEditGroup[graphEditGroup.length - 1] : null;
+  if (!g || !cur || !GROUPS[cur]) return;
+  const grp = GROUPS[cur];
+  // 目标图 = 父级（路径弹出后的图）
+  const parentPath = graphEditGroup.slice(0, -1);
+  const parent = parentPath.length ? GROUPS[parentPath[parentPath.length - 1]].graph : null;
+  const parentGraph = parent || (selObjIdx >= 0 ? state.objects[selObjIdx].graph : null);
+  if (!parentGraph) return;
+  // 找到父图中引用该组的 groupRef 节点，替换为组内节点
+  const refIdx = parentGraph.nodes.findIndex(function (n) { return n.type === 'groupRef' && (n.p || {}).group === cur; });
+  if (refIdx < 0) { alert('未在当前层找到该组的引用节点。'); return; }
+  const ref = parentGraph.nodes[refIdx];
+  const newNodes = grp.graph.nodes.map(function (n) {
+    return { id: nextNodeId++, type: n.type, p: JSON.parse(JSON.stringify(n.p || {})), x: (n.x || 0) + (ref.x || 0) - 60, y: (n.y || 0) + (ref.y || 0) - 30 };
+  });
+  const idMap = {};
+  grp.graph.nodes.forEach(function (n, i) { idMap[n.id] = newNodes[i].id; });
+  // 组内连线 → 映射到新节点
+  const newConns = (grp.graph.conns || []).map(function (c) {
+    return { from: idMap[c.from], fromSock: c.fromSock, to: idMap[c.to], toSock: c.toSock };
+  }).filter(function (c) { return c.from !== undefined && c.to !== undefined; });
+  const newFlows = (grp.graph.flows || []).map(function (f) {
+    return { from: idMap[f.from], to: idMap[f.to], fromSock: f.fromSock };
+  }).filter(function (f) { return f.from !== undefined && f.to !== undefined; });
+  // 替换：删除 groupRef，插入解包节点
+  parentGraph.nodes.splice(refIdx, 1);
+  parentGraph.nodes = parentGraph.nodes.concat(newNodes);
+  parentGraph.conns = (parentGraph.conns || []).concat(newConns);
+  parentGraph.flows = (parentGraph.flows || []).concat(newFlows);
+  // 删除组定义
+  delete GROUPS[cur];
+  // 回到父级路径
+  graphEditGroup = parentPath.length ? parentPath : null;
+  if (graphEditGroup) {
+    const pc = graphEditGroup[graphEditGroup.length - 1];
+    if (els.groupEditName) els.groupEditName.textContent = pc;
+  } else {
+    if (els.groupEditRow) els.groupEditRow.style.display = 'none';
+    if (els.scratchGroupDone) els.scratchGroupDone.style.display = 'none';
+    hideGroupEditBtns();
+  }
+  renderGroupPath();
+  fillNodeCatSelect();
+  if (scratchModeOn) fillScratchPalette();
+  renderNodeGraph();
+  alert('已解包节点组「' + cur + '」，组内节点已放回' + (parentPath.length ? '上一层级' : '主画布') + '。');
+}
+// 渲染节点组层级路径（节点组/【A】/【B】），可点击跳转层级
+function renderGroupPath() {
+  const bar = document.getElementById('scratchPathBar');
+  if (!bar) return;
+  if (!graphEditGroup || !graphEditGroup.length) {
+    bar.innerHTML = '节点画布 <span class="layers-hint">拖动节点 · 端口连线 · 点 × 删节点</span>';
+    return;
+  }
+  // 构建路径 HTML：每个层级可点击
+  let html = '节点画布 <span class="layers-hint">';
+  html += '<a href="javascript:void(0)" class="gp-path" data-depth="0" style="color:#a78bfa">节点组</a>';
+  for (let i = 0; i < graphEditGroup.length; i++) {
+    const gn = graphEditGroup[i];
+    html += ' / <a href="javascript:void(0)" class="gp-path" data-depth="' + (i + 1) + '" style="color:#a78bfa">【' + escapeHtml(gn) + '】</a>';
+  }
+  html += '</span>';
+  bar.innerHTML = html;
+  // 绑定点击跳转
+  bar.querySelectorAll('.gp-path').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      gotoGroupLevel(+this.getAttribute('data-depth'));
+    });
+  });
 }
 // 导出所有节点组为 JSON 文件（可直接再导入）
 function exportGroupsJS() {
@@ -1845,7 +3295,26 @@ function exportGroupsJS() {
     const grp = GROUPS[name];
     data[name] = { graph: grp.graph, inputs: grp.inputs, outputs: grp.outputs };
   }
-  downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'node-groups.json');
+  downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'node-groups-node.json');
+}
+// 保存节点组到 localStorage（刷新后仍保留）
+const GROUPS_KEY = 'nd-node-groups';
+function saveGroups() {
+  const data = {};
+  for (const name of Object.keys(GROUPS)) {
+    const grp = GROUPS[name];
+    data[name] = { graph: grp.graph, inputs: grp.inputs, outputs: grp.outputs };
+  }
+  try { localStorage.setItem(GROUPS_KEY, JSON.stringify(data)); } catch (e) { /* 存储满忽略 */ }
+}
+// 启动时从 localStorage 恢复节点组
+function loadGroups() {
+  try {
+    const data = JSON.parse(localStorage.getItem(GROUPS_KEY));
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      for (const name of Object.keys(data)) registerNodeGroup(name, data[name]);
+    }
+  } catch (e) { /* 忽略 */ }
 }
 // 导入节点组 JSON 文件
 function importGroupsJS(file) {
@@ -1854,7 +3323,22 @@ function importGroupsJS(file) {
     try {
       const data = JSON.parse(fr.result);
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('不是有效的节点组 JSON');
+      // 嵌套深度限制：当前编辑路径已达上限，或导入的组含嵌套引用会导致超层，则拒绝
+      const curDepth = graphEditGroup ? graphEditGroup.length : 0;
+      if (curDepth >= graphEditGroupMaxDepth) {
+        alert('节点组嵌套最多 ' + graphEditGroupMaxDepth + ' 层，已达到上限，不能导入节点组。');
+        return;
+      }
       const names = Object.keys(data);
+      // 若任一导入的组图内含 groupRef（嵌套组引用），且当前层级+1 已达上限，则拒绝
+      const hasNested = names.some(function (n) {
+        const g = data[n] && data[n].graph;
+        return g && Array.isArray(g.nodes) && g.nodes.some(function (nd) { return nd.type === 'groupRef'; });
+      });
+      if (hasNested && curDepth + 1 >= graphEditGroupMaxDepth) {
+        alert('导入的节点组含嵌套引用，会超过 ' + graphEditGroupMaxDepth + ' 层上限，不能导入。');
+        return;
+      }
       for (const name of names) registerNodeGroup(name, data[name]);
       alert('导入成功：' + names.length + ' 个节点组（共 ' + Object.keys(GROUPS).length + ' 个）。');
     } catch (err) {
@@ -1873,16 +3357,198 @@ function updateRunButton() {
     : '已停止 · ' + state.instances.length + ' 个实例';
 }
 
+// ---------- 插件库（导入外部 JS 插件，注册节点类型与节点库） ----------
+const PLUGINS_KEY = 'nd-plugins';
+function loadPlugins() {
+  try { return JSON.parse(localStorage.getItem(PLUGINS_KEY) || '[]'); } catch (e) { return []; }
+}
+function savePlugins(arr) {
+  try { localStorage.setItem(PLUGINS_KEY, JSON.stringify(arr)); } catch (e) { /* 存储满忽略 */ }
+}
+let pluginNodeIds = new Set(); // 插件注册的节点 id（可右键编辑）
+function applyPluginCode(code) {
+  const re = /registerNodeType\s*\(\s*['"]([^'"]+)['"]/g;
+  let m;
+  while ((m = re.exec(code || ''))) pluginNodeIds.add(m[1]);
+  (0, eval)(code);
+}
+function loadAllPlugins() {
+  for (const p of loadPlugins()) {
+    try { applyPluginCode(p.code); } catch (e) { console.warn('插件加载失败: ' + (p.name || '') + ' · ' + e.message); }
+  }
+}
+let tempPlugins = []; // 本次会话导入、尚未点「保存」的插件（刷新后丢失）
+function renderPluginLib() {
+  const savedBox = document.getElementById('scratchPluginSaved');
+  const newBox = document.getElementById('scratchPluginNewBox');
+  const infoBox = document.getElementById('scratchPluginInfo');
+  const svBtn = document.getElementById('scratchBtnSavePlugin');
+  if (svBtn) svBtn.style.display = tempPlugins.length ? '' : 'none';
+  const saved = loadPlugins().map(function (x) { return { name: x.name, code: x.code, time: x.time, saved: true }; });
+  const all = saved.concat(tempPlugins.map(function (x) { return { name: x.name, code: x.code, time: x.time, saved: false }; }));
+  // 已保存插件：盒子外面、保存按钮上方（点击【保存】后的插件存放位置）
+  if (savedBox) {
+    savedBox.innerHTML = '';
+    savedBox.style.display = saved.length ? 'block' : 'none';
+    for (const p of saved) savedBox.appendChild(pluginItemEl(p, false));
+  }
+  // 盒子（导入按钮下方、保存按钮上方）：放本次导入、尚未保存的插件
+  if (newBox) {
+    newBox.innerHTML = '';
+    for (const p of tempPlugins) newBox.appendChild(pluginItemEl(p, false));
+  }
+  // 导入信息按钮内容：全部插件条目（已保存 + 未保存）
+  if (infoBox) {
+    infoBox.innerHTML = '';
+    if (!all.length) { infoBox.textContent = '暂无导入的插件'; return; }
+    for (const p of all) infoBox.appendChild(pluginItemEl(p));
+  }
+}
+// 生成单个插件条目（左键编辑、删除按钮、未保存标记）
+function pluginItemEl(p, showMeta) {
+  const item = document.createElement('div');
+  item.className = 'plugin-item';
+  item.title = '左键打开脚本编辑器修改 JS';
+  const nodeCount = (p.code.match(/registerNodeType\s*\(/g) || []).length;
+  const nm = document.createElement('span');
+  nm.className = 'pi-name';
+  nm.textContent = p.name || '插件';
+  // 信息（节点数/日期/未保存）只在 📥 导入信息中显示；盒子条目不重复显示
+  const meta = document.createElement('span');
+  meta.className = 'pi-meta';
+  meta.textContent = nodeCount + ' 个节点 · ' + new Date(p.time).toLocaleDateString() + (p.saved ? '' : ' · 未保存');
+  // 左键插件类型盒子 → 显示该插件注册的节点库（像点击「输入」分类显示其节点一样）
+  item.addEventListener('click', function () {
+    showPluginNodes(p);
+  });
+  // 右键插件类型盒子 → 打开文本编辑器修改其中的 JS 代码（插件 code 含 // @locked 标记则锁定，不能编辑）
+  item.addEventListener('contextmenu', function (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (p.code && p.code.indexOf('@locked') >= 0) return; // 插件已锁定：不能右键编辑
+    openNodeJsEditor(p.code, '编辑插件「' + (p.name || '') + '」的 JS', { plugin: p });
+  });
+  item.appendChild(nm);            // 名称在前
+  if (showMeta !== false) item.appendChild(meta); // meta 仅在 📥 导入信息中显示
+  return item;
+}
+// 显示某插件的节点库（在节点库区域渲染该插件 code 中注册的全部节点）
+function showPluginNodes(p) {
+  const ids = [];
+  const re = /registerNodeType\s*\(\s*['"]([^'"]+)['"]/g;
+  let m;
+  while ((m = re.exec(p.code || ''))) ids.push(m[1]);
+  const lib = document.getElementById('scratchLib');
+  if (lib) lib.style.display = '';
+  const pal = els.scratchPalette;
+  pal.innerHTML = '';
+  const title = document.querySelector('#scratchLib .scratch-col-title');
+  if (title) title.childNodes[0].textContent = (p.name || '插件') + ' 类型节点 ';
+  if (!ids.length) {
+    const note = document.createElement('span');
+    note.className = 'layers-hint';
+    note.textContent = '该插件未注册节点';
+    pal.appendChild(note);
+    return;
+  }
+  for (const id of ids) {
+    const def = NODE_TYPES[id];
+    if (!def) continue;
+    const btn = document.createElement('button');
+    btn.className = 'pb';
+    btn.style.background = NODE_CATS[def.category] || '#22d3ee';
+    btn.textContent = def.name;
+    btn.title = (def.desc || '') + '（左键编辑 JS · 双击添加）';
+    // 插件节点库：左键=添加到画布，右键=打开文本编辑器修改 JS
+    btn.addEventListener('click', function () { addNodeToObject(id); });
+    if (!def.noEdit) {
+      btn.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openNodeJsEditor(NODE_DEF_SRC[id], '编辑节点「' + def.name + '」的 JS');
+      });
+    }
+    pal.appendChild(btn);
+  }
+}
+// 保存按钮：把本次会话导入的（未保存）插件永久保存到浏览器
+function saveAllPlugins() {
+  if (!tempPlugins.length) { alert('没有待保存的插件。'); return; }
+  const n0 = tempPlugins.length;
+  const arr = loadPlugins();
+  for (const t of tempPlugins) arr.unshift({ name: t.name, code: t.code, time: t.time || Date.now() });
+  savePlugins(arr);
+  tempPlugins = [];
+  renderPluginLib();
+  alert('已保存 ' + n0 + ' 个插件到浏览器（刷新后仍然保留）。');
+}
+// ---------- 节点全局搜索（搜索框：搜所有类型节点库，含自制/插件） ----------
+function renderSearchResults(q) {
+  els.scratchPalette.innerHTML = '';
+  // 搜索时隐藏插件盒/声音区/变量区等分类专属区域
+  const pbox = document.getElementById('scratchPluginBox');
+  if (pbox) pbox.style.display = 'none';
+  const sb = document.getElementById('scratchSoundBlock');
+  if (sb) sb.style.display = 'none';
+  const vb = document.getElementById('scratchVarBlock');
+  if (vb) vb.style.display = 'none';
+  const sbc = document.getElementById('scratchBtnAddCustom');
+  const sbs = document.getElementById('scratchBtnSaveCustom');
+  if (sbc) sbc.style.display = 'none';
+  if (sbs) sbs.style.display = 'none';
+  const head = document.createElement('span');
+  head.className = 'layers-hint';
+  head.style.padding = '2px 2px 6px';
+  head.textContent = '搜索「' + q + '」：';
+  els.scratchPalette.appendChild(head);
+  const results = [];
+  for (const t of Object.keys(NODE_TYPES)) {
+    const def = NODE_TYPES[t];
+    if (!def || !def.name) continue;
+    const hay = (def.name + ' ' + (def.desc || '') + ' ' + (def.category || '')).toLowerCase();
+    if (hay.indexOf(q) >= 0) results.push(t);
+  }
+  results.sort();
+  if (!results.length) {
+    const note = document.createElement('span');
+    note.className = 'n-note';
+    note.textContent = '没有找到匹配的节点';
+    els.scratchPalette.appendChild(note);
+    return;
+  }
+  for (const t of results) {
+    const def = NODE_TYPES[t];
+    const btn = document.createElement('button');
+    btn.className = 'pb';
+    btn.style.background = NODE_CATS[def.category] || '#22d3ee';
+    btn.textContent = def.name + '（' + def.category + '）';
+    btn.title = (def.desc || '') + '（左键添加' + (((def.category === '自制' || pluginNodeIds.has(t)) && NODE_DEF_SRC[t] && !def.noEdit) ? ' · 右键编辑 JS' : '') + '）';
+    btn.addEventListener('click', function () { addNodeToObject(t); });
+    if ((def.category === '自制' || pluginNodeIds.has(t)) && NODE_DEF_SRC[t] && !def.noEdit) {
+      btn.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openNodeJsEditor(NODE_DEF_SRC[t], '编辑节点「' + def.name + '」的 JS');
+      });
+    }
+    els.scratchPalette.appendChild(btn);
+  }
+}
 // ---------- 全屏模式（放大：节点库 + 大节点画布 + 舞台 + 实例信息） ----------
 let scratchModeOn = false;
+let scratchFromFloat = false; // 全屏编辑器是否从「浮动窗」进入（收回时回到浮动窗）
 let scratchCat = '输入'; // 节点库当前分类
-let stageView = { ox: 0, oy: 0 }; // 舞台预览偏移（放大超出舞台时可拖动查看）
+let stageView = { ox: 0, oy: 0, baseS: null }; // 舞台视口：ox/oy=左上世界坐标（格），baseS=内容铺满基准（CSS px/格）
 let stagePan = null;
 
 function openScratchMode() {
+  window.__nodeEditorOpen = true;
   scratchModeOn = true;
   curGraphArea = els.scratchCanvas; // 节点画布切换到全屏
-  els.nodePanel.classList.remove('open');
+  if (!scratchModeOn) window.__nodeEditorOpen = false;
+  // 从小面板进入：隐藏小面板（移除 open 状态）；从浮动窗进入：保留小面板的 open 状态，
+  // 便于收回浮动窗后小面板能继续显示（浮动窗场景 nodePanel 本就 display:none）
+  if (!scratchFromFloat) els.nodePanel.classList.remove('open');
   els.scratchOverlay.classList.add('open');
   fillScratchCats();
   fillScratchPalette();
@@ -1892,18 +3558,48 @@ function openScratchMode() {
   updateRunButton();
 }
 function closeScratchMode() {
+  window.__nodeEditorOpen = false;
   scratchModeOn = false;
   curGraphArea = null;
   els.scratchOverlay.classList.remove('open');
-  els.nodePanel.classList.add('open');
+  window.__nodeEditorOpen = true;
+  // 从浮动窗进入全屏的：收回后回到浮动窗；否则回到小面板
+  if (scratchFromFloat) {
+    nodeFloatWin.style.display = 'block';
+    nodeFloatBody.appendChild(document.getElementById('nodeBody'));
+    els.nodePanel.style.display = 'none';
+    window.__nodeEditorOpen = true;
+  } else {
+    els.nodePanel.classList.add('open');
+    raiseSidePanel(els.nodePanel);
+  }
+  // 关闭大节点编辑器时：若舞台处于浮动框，自动收回右侧栏
+  if (stageFloating) {
+    stageFloating = false;
+    const fw = document.getElementById('stageFloatWin');
+    if (fw) fw.style.display = 'none';
+    const ctrl = document.getElementById('stageCtrl');
+    if (ctrl && els.scratchRight.contains(ctrl)) els.scratchRight.insertBefore(els.stageBox, ctrl);
+    else els.scratchRight.appendChild(els.stageBox);
+    resizeStage();
+  }
   renderNodeGraph();
   updateRunButton();
 }
 function fillScratchCats() {
+  // 先把搜索框、插件库盒子与已保存插件区移出（避免被 innerHTML 清掉），重建后再放回（搜索框在顶部，插件区在「插件」按钮下方）
+  const searchEl = document.getElementById('scratchSearchWrap');
+  const pluginBox = document.getElementById('scratchPluginBox');
+  const pluginSaved = document.getElementById('scratchPluginSaved');
+  if (searchEl && searchEl.parentNode === els.scratchCats) els.scratchCats.removeChild(searchEl);
+  if (pluginBox && pluginBox.parentNode === els.scratchCats) els.scratchCats.removeChild(pluginBox);
+  if (pluginSaved && pluginSaved.parentNode === els.scratchCats) els.scratchCats.removeChild(pluginSaved);
   els.scratchCats.innerHTML = '';
+  // 搜索框放回顶部（事件按钮正上方）
+  if (searchEl) els.scratchCats.appendChild(searchEl);
   for (const cat of Object.keys(NODE_CATS)) {
-    const has = Object.keys(NODE_TYPES).some(function (t) { return NODE_TYPES[t].category === cat; });
-    if (!has) continue;
+    if (cat === '插件') continue; // 「插件」分类按钮单独添加（插件库）
+    // 所有类型分类固定显示（含暂无节点的空分类，点击显示「暂无节点」提示）
     const btn = document.createElement('div');
     btn.className = 'cat' + (cat === scratchCat ? ' active' : '');
     btn.style.background = NODE_CATS[cat];
@@ -1926,30 +3622,107 @@ function fillScratchCats() {
     fillScratchPalette();
   });
   els.scratchCats.appendChild(gbtn);
+  // 「插件」分类：打开插件库（与事件/运动/控制同一个盒子里的新盒子）
+  const pbtn = document.createElement('div');
+  pbtn.className = 'cat' + (scratchCat === '插件' ? ' active' : '');
+  pbtn.style.background = NODE_CATS['插件'];
+  pbtn.textContent = '插件';
+  pbtn.addEventListener('click', function () {
+    scratchCat = '插件';
+    fillScratchCats();
+    fillScratchPalette();
+  });
+  els.scratchCats.appendChild(pbtn);
+  // 已保存插件区：常驻显示在「插件」按钮正下方（不用点击插件即可看到）
+  if (pluginSaved) els.scratchCats.appendChild(pluginSaved);
+  // 插件库盒子（点击插件分类时才展开）
+  if (pluginBox) els.scratchCats.appendChild(pluginBox);
+}
+// 已保存插件常驻显示：始终渲染在「插件」分类按钮下方（不依赖当前分类，无需点击插件）
+function renderSavedPlugins() {
+  const savedBox = document.getElementById('scratchPluginSaved');
+  if (!savedBox) return;
+  const saved = loadPlugins().map(function (x) { return { name: x.name, code: x.code, time: x.time, saved: true }; });
+  savedBox.innerHTML = '';
+  savedBox.style.display = saved.length ? 'block' : 'none';
+  for (const p of saved) savedBox.appendChild(pluginItemEl(p, false));
 }
 function fillScratchPalette() {
+  // 节点组工具（打包/保存/导出/导入）仅「节点组」分类显示，其他分类隐藏（避免遮挡节点）
+  const gt = document.getElementById('scratchGroupTools');
+  const isGroupCat = scratchCat === '节点组';
+  if (gt) gt.style.display = isGroupCat ? '' : 'none';
+  // 搜索模式：搜索框有内容时全局搜索所有类型（含自制与插件节点）
+  const q = (els.scratchSearch ? els.scratchSearch.value : '').trim().toLowerCase();
+  if (q) { renderSearchResults(q); return; }
+  renderSavedPlugins(); // 已保存插件常驻显示（无需点击插件分类）
+  const pbox = document.getElementById('scratchPluginBox');
+  const isPl = scratchCat === '插件';
+  if (pbox) pbox.style.display = isPl ? 'block' : 'none';
   els.scratchPalette.innerHTML = '';
+  // 声音区只在选中「声音」分类时展开显示（导入声音属于声音类型节点库）
+  const sb = document.getElementById('scratchSoundBlock');
+  if (sb) sb.style.display = (scratchCat === '声音') ? 'block' : 'none';
+  const sbc = document.getElementById('scratchBtnAddCustom');
+  const sbs = document.getElementById('scratchBtnSaveCustom');
+  if (sbs) sbs.style.display = (scratchCat === '自制') ? '' : 'none';
+  if (sbc) sbc.style.display = (scratchCat === '自制') ? '' : 'none';
   // 变量区只在选中「变量」分类时展开显示（新建变量属于变量类型节点库）
-  if (els.scratchVarRow) els.scratchVarRow.style.display = (scratchCat === '变量') ? 'flex' : 'none';
+  const vb = document.getElementById('scratchVarBlock');
+  // 变量/数组区只在选中「变量」分类时显示
+  if (vb) vb.style.display = (scratchCat === '变量') ? '' : 'none';
+  if (scratchCat === '插件') {
+    // 已保存插件自动排列到【📂 导入插件】按钮下方（插件库盒子内）
+    const savedBox = document.getElementById('scratchPluginSaved');
+    const box = document.getElementById('scratchPluginBox');
+    const imp = document.getElementById('scratchBtnImportPlugin');
+    if (savedBox && box && imp && savedBox.parentNode !== box) {
+      box.insertBefore(savedBox, imp.nextSibling);
+    }
+    renderPluginLib();
+    return;
+  }
   if (scratchCat === '节点组') { // 列出所有节点组，点击添加为单个组节点
+    // 显示组内打包 / 保存按钮（进入节点组分类即可使用）
+    const gp2 = document.getElementById('scratchBtnPack'); if (gp2) gp2.style.display = '';
+    const gs2 = document.getElementById('scratchBtnSaveGroups'); if (gs2) gs2.style.display = '';
     if (!Object.keys(GROUPS).length) {
       const note = document.createElement('span');
-      note.className = 'n-note';
+      note.className = 'layers-hint';
       note.textContent = '暂无节点组：框选画布节点后点「📦 打包」创建';
       els.scratchPalette.appendChild(note);
       return;
     }
     for (const name of Object.keys(GROUPS)) {
+      const wrap = document.createElement('div');
+      wrap.className = 'group-pal-item';
+      wrap.style.position = 'relative';
       const btn = document.createElement('button');
       btn.className = 'pb';
       btn.style.background = '#a78bfa';
       btn.textContent = name;
       btn.title = '添加节点组「' + name + '」（双击组节点可展开编辑）';
       btn.addEventListener('click', function () { addNodeToObject('groupRef:' + name); });
-      els.scratchPalette.appendChild(btn);
+      wrap.appendChild(btn);
+      // 悬停显示右上角删除按钮
+      const del = document.createElement('span');
+      del.className = 'group-pal-del';
+      del.textContent = '✕';
+      del.title = '删除节点组「' + name + '」';
+      del.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (confirm('删除节点组「' + name + '」？\n画布上使用该组的节点仍会保留（显示为未找到组）。')) {
+          deleteGroup(name);
+        }
+      });
+      wrap.appendChild(del);
+      els.scratchPalette.appendChild(wrap);
     }
     return;
   }
+  // 离开「节点组」分类：隐藏组内打包/保存按钮
+  const gp3 = document.getElementById('scratchBtnPack'); if (gp3) gp3.style.display = 'none';
+  const gs3 = document.getElementById('scratchBtnSaveGroups'); if (gs3) gs3.style.display = 'none';
   for (const t of Object.keys(NODE_TYPES)) {
     const def = NODE_TYPES[t];
     if (def.category !== scratchCat) continue;
@@ -1958,19 +3731,32 @@ function fillScratchPalette() {
     btn.style.background = NODE_CATS[def.category] || '#888';
     btn.textContent = def.name;
     btn.title = def.desc || '';
+    // 自制/插件节点：左键=添加到画布，右键=打开脚本编辑器修改 JS
     btn.addEventListener('click', function () { addNodeToObject(t); });
+    if ((def.category === '自制' || def.category === '插件') && NODE_DEF_SRC[t]) {
+      btn.title = (def.desc || '') + '（左键添加 · 右键编辑 JS）';
+      if (!def.noEdit) {
+        btn.addEventListener('contextmenu', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openNodeJsEditor(NODE_DEF_SRC[t], '编辑节点「' + def.name + '」的 JS');
+        });
+      }
+    }
     els.scratchPalette.appendChild(btn);
+  }
+  if (!els.scratchPalette.children.length) {
+    const note = document.createElement('span');
+    note.className = 'n-note';
+    note.textContent = '该类型暂无节点（可新建自制节点或导入插件）';
+    els.scratchPalette.appendChild(note);
   }
 }
 // 舞台：正方形，实时预览主画布（右上角）；舞台大小与网格大小分别可调。
 // 舞台变大时右侧栏跟随变宽（压缩左侧节点画布），且永不超过屏幕，避免溢出到屏幕外。
-function resizeStage() {
-  const size = Math.max(120, +els.stageSize.value || 320);
-  els.stageSizeVal.textContent = size;
-  // 舞台最大边长：不超过右侧栏可用宽度与屏幕高度的 55%（保证不溢出）
-  const maxSize = Math.max(160, Math.min(window.innerWidth * 0.46 - 20, cssH() * 0.55));
-  const s = Math.round(Math.min(size, maxSize));
-  els.stageSize.max = Math.round(maxSize); // 滑块上限 = 屏幕允许的最大边长（所见即所得）
+let stageFloating = false; // 舞台是否处于独立浮动窗口
+// 只设置舞台正方形尺寸（不改右栏宽度）
+function applyStageSize(s) {
   const sc = els.stageCanvas;
   const d = dpr();
   sc.style.width = s + 'px';
@@ -1979,51 +3765,172 @@ function resizeStage() {
   sc.height = Math.round(s * d);
   els.stageBox.style.width = s + 'px';
   els.stageBox.style.height = s + 'px';
-  // 右栏宽度跟随舞台（+留白），flex 布局自动压缩左侧节点画布
-  els.scratchRight.style.flexBasis = Math.max(240, s + 40) + 'px';
+  if (stageFloating) document.getElementById('stageFloatBody').style.height = (s + 16) + 'px';
+}
+function resizeStage() {
+  // 舞台尺寸 = 所在容器可用宽（浮动窗宽 或 右侧栏宽），正方形
+  let avail;
+  if (stageFloating) {
+    const fw = document.getElementById('stageFloatWin');
+    // 窗口宽高内取较小值，使舞台始终随窗口缩放（不超窗口、不留大空白）
+    avail = Math.min(fw.offsetWidth - 24, fw.offsetHeight - 40);
+  } else {
+    avail = els.scratchRight.clientWidth - 20;
+  }
+  const s = Math.round(Math.max(120, Math.min(avail, cssH() * 0.9)));
+  applyStageSize(s);
+  if (!stageFloating) {
+    els.scratchRight.style.flexBasis = Math.max(220, s + 30) + 'px';
+  }
 }
 function stageLoop() {
   requestAnimationFrame(stageLoop);
   if (!scratchModeOn) return;
   const sc = els.stageCanvas;
-  if (sc.width === 0 || !canvas || canvas.width === 0) return;
+  if (sc.width === 0 || !state.layers || !state.layers.length) return;
+  if (!stageView.baseS || (!stageView._everShown && computeContentBounds())) fitStageView(); // 首次 / 世界有内容但从未显示过 → 自动对准内容
   const cc = sc.getContext('2d');
-  cc.imageSmoothingEnabled = true;
-  cc.clearRect(0, 0, sc.width, sc.height);
-  // 背景浅色网格：无论预览缩小到多小，舞台四周始终有网格线
   const d = dpr();
-  cc.strokeStyle = 'rgba(0,0,0,.12)';
-  cc.lineWidth = 1;
-  const step = 16 * d;
-  for (let gx = step; gx < sc.width; gx += step) {
-    cc.beginPath(); cc.moveTo(gx, 0); cc.lineTo(gx, sc.height); cc.stroke();
-  }
-  for (let gy = step; gy < sc.height; gy += step) {
-    cc.beginPath(); cc.moveTo(0, gy); cc.lineTo(sc.width, gy); cc.stroke();
-  }
-  // 网格大小 = 预览倍率（100% 时主画布较大边正好铺满正方形舞台，保持宽高比、格子为正方形；
-  // 调大放大细节（超出部分可拖动平移查看），调小露出背景网格）
-  const cw = canvas.width / d, ch = canvas.height / d;
+  cc.setTransform(d, 0, 0, d, 0, 0); // 用 CSS 像素坐标
+  cc.imageSmoothingEnabled = false;
+  const W = sc.width / d, H = sc.height / d; // CSS 尺寸
+  // 画布背景（与主画布一致：白色）
+  cc.fillStyle = '#ffffff';
+  cc.fillRect(0, 0, W, H);
   const grid = Math.max(5, +els.stageGrid.value || 100) / 100;
-  const fit = sc.width / Math.max(cw, ch, 1); // 等比缩放：像素格保持正方形，不拉伸变形
-  const tw = Math.max(1, cw * fit * grid);
-  const th = Math.max(1, ch * fit * grid);
-  // 叠加舞台平移偏移（放大后拖动查看超出部分）
-  const ox = (sc.width - tw * d) / 2 + stageView.ox * d;
-  const oy = (sc.height - th * d) / 2 + stageView.oy * d;
-  cc.drawImage(canvas, 0, 0, canvas.width, canvas.height, ox, oy, tw * d, th * d);
+  const s = (stageView.baseS || 1) * grid; // CSS px / 格（缩放）
+  const ox = stageView.ox || 0, oy = stageView.oy || 0;
+  const gx0 = Math.floor(ox), gx1 = Math.floor(ox + W / s);
+  const gy0 = Math.floor(oy), gy1 = Math.floor(oy + H / s);
+  // 网格线（自动步进，线距 >= 12px）
+  let step = 1;
+  while (s * step < 12) step *= 2;
+  cc.strokeStyle = 'rgba(0,0,0,.14)';
+  cc.lineWidth = 1;
+  const gxs = Math.ceil(gx0 / step) * step;
+  for (let gxi = gxs; gxi <= gx1; gxi += step) {
+    const px = (gxi - ox) * s;
+    cc.beginPath(); cc.moveTo(px, 0); cc.lineTo(px, H); cc.stroke();
+  }
+  const gys = Math.ceil(gy0 / step) * step;
+  for (let gyi = gys; gyi <= gy1; gyi += step) {
+    const py = (gyi - oy) * s;
+    cc.beginPath(); cc.moveTo(0, py); cc.lineTo(W, py); cc.stroke();
+  }
+  // 坐标轴（世界 x=0 / y=0 轴线）
+  if (state.showAxis) {
+    cc.strokeStyle = (typeof AXIS_COLOR !== 'undefined') ? AXIS_COLOR : '#8a8f9a';
+    cc.lineWidth = 1.6;
+    cc.beginPath();
+    if (gx0 <= 0 && 0 <= gx1) { const sx = (0 - ox) * s + 0.5; cc.moveTo(sx, 0); cc.lineTo(sx, H); }
+    if (gy0 <= 0 && 0 <= gy1) { const sy = (0 - oy) * s + 0.5; cc.moveTo(0, sy); cc.lineTo(W, sy); }
+    cc.stroke();
+  }
+  // 世界像素（按格子绘制；格子过多时跳步防卡）
+  const cells = (gx1 - gx0 + 1) * (gy1 - gy0 + 1);
+  const jstep = cells > 30000 ? Math.ceil(cells / 30000) : 1;
+  for (let gy = gy0; gy <= gy1; gy += jstep) {
+    for (let gx = gx0; gx <= gx1; gx += jstep) {
+      const c = worldPixel(gx, gy);
+      if (!c) continue;
+      stageView._everShown = true; // 视图已显示过内容（此后不再自动跳动）
+      cc.fillStyle = c;
+      cc.fillRect((gx - ox) * s, (gy - oy) * s, s * jstep, s * jstep);
+    }
+  }
+  // 实例（该图层可见的对象，画在像素之上）
+  drawStageInstances(cc, s, ox, oy);
   updateInstInfo();
+}
+// 内容包围盒（所有可见图层非空像素范围）
+function computeContentBounds() {
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const L of state.layers) {
+    if (!L.visible) continue;
+    for (const key of L.pixels.keys()) {
+      const i = key.indexOf(',');
+      const gx = +key.slice(0, i), gy = +key.slice(i + 1);
+      if (gx < x0) x0 = gx; if (gx > x1) x1 = gx;
+      if (gy < y0) y0 = gy; if (gy > y1) y1 = gy;
+    }
+  }
+  if (x1 < x0) return null;
+  return { x0: x0, y0: y0, x1: x1, y1: y1 };
+}
+// 舞台视图：内容自适应铺满（等比、格子正方、居中），grid 100 = 铺满
+function fitStageView() {
+  const sc = els.stageCanvas;
+  if (!sc || sc.width === 0) return;
+  const d = dpr();
+  const W = sc.width / d;
+  const b = computeContentBounds();
+  let w, h;
+  if (b) {
+    w = b.x1 - b.x0 + 9; h = b.y1 - b.y0 + 9; // 内容范围 + 留白（决定缩放基准）
+  } else {
+    w = 200; h = 200;
+  }
+  const s = Math.min(W / w, W / h); // 等比铺满（正方格子）
+  stageView.baseS = s;
+  // 坐标轴原点 (0,0) 居中于舞台画布
+  stageView.ox = -W / s / 2;
+  stageView.oy = -W / s / 2;
+  els.stageGrid.value = 100;
+  els.stageGridVal.textContent = '100';
+}
+// 舞台画实例（对象模板图缩放到舞台坐标，画在世界位置）
+function drawStageInstances(cc, s, ox, oy) {
+  if (!state.instances.length) return;
+  for (const inst of state.instances) {
+    const ili = inst.layerIdx === undefined ? 0 : inst.layerIdx;
+    if (!state.layers[ili] || !state.layers[ili].visible) continue;
+    const obj = state.objects[inst.objectIdx];
+    if (!obj) continue;
+    let img = objCanvases.get(obj.id);
+    if (!img) { img = buildObjectCanvas(obj); objCanvases.set(obj.id, img); }
+    const ix = Math.round(inst.x), iy = Math.round(inst.y);
+    cc.drawImage(img, (ix - ox) * s, (iy - oy) * s, obj.w * s, obj.h * s);
+    if (inst.id === selInstId) { // 选中高亮框
+      cc.strokeStyle = 'rgba(30, 200, 120, .95)';
+      cc.lineWidth = 1.5;
+      cc.setLineDash([3, 2]);
+      cc.strokeRect((ix - ox) * s - 0.5, (iy - oy) * s - 0.5, obj.w * s + 1, obj.h * s + 1);
+      cc.setLineDash([]);
+    }
+  }
+}
+// 查世界像素颜色（所有可见图层，顶层优先；null = 空 → 画板灰底；基于显示色）
+function worldPixel(gx, gy) {
+  for (let li = state.layers.length - 1; li >= 0; li--) {
+    const L = state.layers[li];
+    if (!L.visible) continue;
+    const c = displayColor(L, gx, gy);
+    if (c) return c;
+  }
+  return null;
 }
 // 节点库（左侧列）宽度拖拽调节：鼠标按住右边缘拖动
 let libResize = null;
 (function () {
   if (!els.scratchLib) return;
-  els.scratchLib.addEventListener('pointerdown', function (e) {
+  // 分类栏右缘拖拽把手（分类栏 ↔ 节点库 分界）
+  let catsResize = null;
+  const catsDivider = document.getElementById('catsDivider');
+  if (catsDivider) catsDivider.addEventListener('pointerdown', function (e) {
+    catsResize = { x: e.clientX, w: els.scratchCats.getBoundingClientRect().width };
+    e.preventDefault();
+  });
+  document.addEventListener('pointermove', function (e) {
+    if (!catsResize) return;
+    els.scratchCats.style.width = Math.max(90, Math.min(220, catsResize.w + (e.clientX - catsResize.x))) + 'px';
+  });
+  document.addEventListener('pointerup', function () { catsResize = null; });
+  // 节点库右缘拖拽把手（可见竖条，避免被画布遮挡）
+  const libDivider = document.getElementById('libDivider');
+  (libDivider || els.scratchLib).addEventListener('pointerdown', function (e) {
     const r = els.scratchLib.getBoundingClientRect();
-    if (e.clientX > r.right - 10) { // 右边缘 10px 内为拖拽区
-      libResize = { x: e.clientX, w: r.width };
-      e.preventDefault();
-    }
+    libResize = { x: e.clientX, w: r.width };
+    e.preventDefault();
   });
   document.addEventListener('pointermove', function (e) {
     if (!libResize) return;
@@ -2046,10 +3953,17 @@ function renderScratchSide() {
   });
   const list = els.scratchInstList;
   list.innerHTML = '';
-  if (!state.instances.length) {
-    list.innerHTML = '<div class="n-note">暂无实例，选择对象后点「⬇ 实例化」</div>';
+  const curObj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
+  if (!curObj) {
+    list.innerHTML = '<div class="n-note">先选择对象</div>';
+    return;
   }
-  state.instances.forEach(function (it) {
+  const insts = state.instances.filter(function (it) { return it.objectIdx === selObjIdx; });
+  if (insts.length === 0) {
+    list.innerHTML = '<div class="n-note">' + escapeHtml(curObj.name) + ' 还没有实例（点「⬇ 实例化」）</div>';
+    return;
+  }
+  insts.forEach(function (it) {
     const div = document.createElement('div');
     div.className = 'node-inst' + (it.id === selInstId ? ' active' : '');
     const obj = state.objects[it.objectIdx];
@@ -2096,13 +4010,16 @@ function updateInstInfo() {
 // ---------- 事件绑定 ----------
 els.btnOpenNodeEditor.addEventListener('click', function () {
   els.moreMenu.classList.remove('open');
+  window.__nodeEditorOpen = true;
   els.nodePanel.classList.add('open');
+  raiseSidePanel(els.nodePanel);
   // 「框选添加对象」工具已合并到节点编辑器入口：打开时自动启用（框选像素 → 创建对象）
   setTool('nodeSelect');
   fillNodeCatSelect();
   renderNodePanel();
 });
 els.btnCloseNode.addEventListener('click', function () {
+  if (!scratchModeOn) window.__nodeEditorOpen = false;
   els.nodePanel.classList.remove('open');
 });
 // 「添加对象」工具（节点编辑器左下角）：启用框选像素 → 剪切为对象
@@ -2122,7 +4039,10 @@ els.btnInstDel.addEventListener('click', function () {
 });
 // 添加节点
 els.btnNodeAdd.addEventListener('click', function () {
+  const cat = els.nodeCatSelect.value;
   const type = els.nodeTypeSelect.value;
+  // 自制分类：点击「添加」弹出 JS 编辑器（文字框 + 基础模板），直接编写新节点
+  if (cat === '自制') { openNewNodeEditor(); return; }
   if (!type) { alert('请先选择节点类型（「节点组」分类中选择一个组）。'); return; }
   addNodeToObject(type);
 });
@@ -2142,7 +4062,65 @@ els.importGroupsFile.addEventListener('change', function () {
 els.btnGroupDone.addEventListener('click', function () { doneGroupEdit(); });
 els.scratchGroupDone.addEventListener('click', function () { doneGroupEdit(); });
 // 全屏模式的节点组工具
-els.scratchBtnPack.addEventListener('click', function () { packSelectedAsGroup(); });
+const btnPluginHelp = document.getElementById('btnPluginHelp');
+if (btnPluginHelp) btnPluginHelp.addEventListener('click', function () {
+  const hp = document.getElementById('scratchPluginHelp');
+  if (hp) hp.style.display = hp.style.display === 'block' ? 'none' : 'block';
+});
+const btnPluginInfo = document.getElementById('btnPluginInfo');
+if (btnPluginInfo) btnPluginInfo.addEventListener('click', function () {
+  const ib = document.getElementById('scratchPluginInfo');
+  if (!ib) return;
+  if (ib.style.display === 'block') { ib.style.display = 'none'; return; }
+  renderPluginLib();
+  ib.style.display = 'block';
+});
+const scratchBtnImportPlugin = document.getElementById('scratchBtnImportPlugin');
+if (scratchBtnImportPlugin) scratchBtnImportPlugin.addEventListener('click', function () { els.scratchPluginFile.click(); });
+const scratchBtnSavePlugin = document.getElementById('scratchBtnSavePlugin');
+if (scratchBtnSavePlugin) scratchBtnSavePlugin.addEventListener('click', saveAllPlugins);
+els.scratchPluginFile.addEventListener('change', function () {
+  const f = els.scratchPluginFile.files && els.scratchPluginFile.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = function () {
+    const code = String(reader.result || '');
+    try { applyPluginCode(code); }
+    catch (e) { alert('插件执行失败：' + e.message + '（请检查插件代码）'); els.scratchPluginFile.value = ''; return; }
+    tempPlugins.unshift({ name: f.name.replace(/\.js$/i, '') || '插件', code: code, time: Date.now() });
+    els.scratchPluginFile.value = '';
+    renderPluginLib();
+    alert('插件「' + f.name + '」已导入并临时生效（节点已注册）。点击插件库下方【保存】可永久保存，否则刷新后会重置。');
+  };
+  reader.readAsText(f);
+});
+// 打包按钮（节点组分类 / 组编辑时显示）：把框选节点打包为子组
+function bindGroupPack(btn) {
+  if (btn) btn.addEventListener('click', function () { packSelectedAsGroup(); });
+}
+bindGroupPack(document.getElementById('btnGroupPack'));
+bindGroupPack(document.getElementById('scratchGroupPack'));
+bindGroupPack(document.getElementById('scratchBtnPack'));
+// 保存节点组（节点组分类 / 组编辑时显示）：写入浏览器，刷新后仍保留
+function bindGroupSave(btn) {
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    if (!Object.keys(GROUPS).length) { alert('还没有节点组：先在画布上框选节点后点「📦 打包」。'); return; }
+    saveGroups();
+    const old = btn.textContent;
+    btn.textContent = '✅ 已保存';
+    setTimeout(function () { btn.textContent = old; }, 2000);
+  });
+}
+bindGroupSave(document.getElementById('btnGroupSave'));
+bindGroupSave(document.getElementById('scratchGroupSave'));
+bindGroupSave(document.getElementById('scratchBtnSaveGroups'));
+// 解包按钮：把当前节点组拆回未打包状态（组内节点放回父图）
+function bindGroupUnpack(btn) {
+  if (btn) btn.addEventListener('click', function () { unpackCurrentGroup(); });
+}
+bindGroupUnpack(document.getElementById('btnGroupUnpack'));
+bindGroupUnpack(document.getElementById('scratchGroupUnpack'));
 els.scratchBtnExport.addEventListener('click', function () {
   if (!Object.keys(GROUPS).length) { alert('还没有节点组：先在画布上框选节点后点「📦 打包」。'); return; }
   exportGroupsJS();
@@ -2169,6 +4147,7 @@ els.btnNodeHint.addEventListener('click', function () {
 // 运行 / 停止
 els.btnNodeRun.addEventListener('click', function () {
   state.nodesRunning = !state.nodesRunning;
+  if (!state.nodesRunning) stopAllSounds(); // 停止全部运行时同时停止所有声音
   updateRunButton();
   requestRender();
 });
@@ -2180,55 +4159,440 @@ els.btnZoomOut.addEventListener('click', function () { zoomGraph(0.8); });
 els.btnZoomReset.addEventListener('click', function () { graphView = { s: 1, ox: 30, oy: 30 }; renderNodeGraph(); });
 // 变量管理（每个对象有自己的变量列表，实例的值独立）
 function addVariable(inputEl) {
-  const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
-  if (!obj) { alert('请先在左侧选择一个对象。'); return; }
+  // 未选中对象时自动用第一个对象（避免"添加不了"）
+  if (selObjIdx < 0 || !state.objects[selObjIdx]) {
+    if (state.objects.length) selObjIdx = 0;
+    else { alert('请先创建/选择一个对象。'); return; }
+    if (typeof renderScratchSide === 'function') renderScratchSide();
+    renderNodePanel();
+  }
+  const obj = state.objects[selObjIdx];
   const name = (inputEl.value || '').trim();
   if (!name) { alert('请输入变量名。'); return; }
   if (obj.vars.indexOf(name) >= 0) { alert('变量已存在：' + name); return; }
-  obj.vars.push(name);
+  obj.vars.push({ name: name, value: 0 }); // 变量对象：{ 名称, 默认值 }（值可为数字或字符串，布尔用 0/1）
   inputEl.value = '';
   renderVarUI();
   renderNodeGraph();
 }
+function parseVarValue(str) {
+  const t = String(str == null ? '' : str).trim();
+  if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+  return t;
+}
+// 构建变量默认值编辑表（数字或字符串；布尔用 0/1）
+function buildVarTable(box, v) {
+  const cur = (v && v.value !== undefined) ? v.value : 0;
+  box.innerHTML = '';
+  const row = document.createElement('div');
+  row.className = 'arr-table-row';
+  row.innerHTML = '<label>值</label><input type="text" class="var-val" value="' + String(cur).replace(/"/g, '&quot;') + '" style="flex:1">';
+  const foot = document.createElement('div');
+  foot.className = 'arr-table-foot';
+  const apply = document.createElement('button');
+  apply.className = 'btn';
+  apply.textContent = '✔ 应用';
+  apply.addEventListener('click', function () {
+    v.value = parseVarValue(row.querySelector('.var-val').value);
+    // 同步：把新默认值立即应用到该对象所有已存在实例（否则实例仍用旧值，运行不生效）
+    const vname = (v && v.name) || v;
+    for (const it of state.instances) {
+      if (it.objectIdx === selObjIdx) {
+        if (!it.st.vars) it.st.vars = {};
+        it.st.vars[vname] = v.value;
+      }
+    }
+    renderVarUI();
+  });
+  const close = document.createElement('button');
+  close.className = 'btn';
+  close.textContent = '收起';
+  close.addEventListener('click', function () { box.style.display = 'none'; });
+  foot.appendChild(apply);
+  foot.appendChild(close);
+  box.appendChild(row);
+  box.appendChild(foot);
+}
+// 选中节点联动：若当前选中的节点引用了该变量/数组，且有选中实例 → 返回实例当前值（供列表预览）
+function currentVarPreview(obj, vname) {
+  if (selNodeIdx < 0) return undefined;
+  const g = currentGraph();
+  if (!g) return undefined;
+  const node = g.nodes.find(function (n) { return n.id === selNodeIdx; });
+  if (!node) return undefined;
+  const def = NODE_TYPES[node.type];
+  if (!def || !def.params) return undefined;
+  const hasVar = def.params.some(function (prm) { return prm.key === 'var' && (node.p[prm.key]) === vname; });
+  if (!hasVar) return undefined;
+  const inst = state.instances.find(function (it) { return it.id === selInstId; });
+  if (!inst || !inst.st || !inst.st.vars) return undefined;
+  const v = inst.st.vars[vname];
+  if (v === undefined) return undefined;
+  return (typeof v === 'string') ? '"' + v + '"' : v;
+}
+function currentArrPreview(obj, aname) {
+  if (selNodeIdx < 0) return undefined;
+  const g = currentGraph();
+  if (!g) return undefined;
+  const node = g.nodes.find(function (n) { return n.id === selNodeIdx; });
+  if (!node) return undefined;
+  const def = NODE_TYPES[node.type];
+  if (!def || !def.params) return undefined;
+  const hasArr = def.params.some(function (prm) { return prm.key === 'arr' && (node.p[prm.key]) === aname; });
+  if (!hasArr) return undefined;
+  const inst = state.instances.find(function (it) { return it.id === selInstId; });
+  if (!inst || !inst.st || !inst.st.arrs) return undefined;
+  const a = inst.st.arrs[aname];
+  if (!Array.isArray(a)) return undefined;
+  // 组数多时只预览第 0 组前几项
+  const g0 = Array.isArray(a[0]) ? a[0] : a;
+  return '[' + g0.slice(0, 6).join(',') + (g0.length > 6 ? ',…' : '') + ']';
+}
 function renderVarUI() {
   const obj = selObjIdx >= 0 ? state.objects[selObjIdx] : null;
   const hint = obj
-    ? ('变量：' + (obj.vars && obj.vars.length ? obj.vars.length + ' 个' : '（无）'))
+    ? ('变量：' + (obj.vars && obj.vars.length ? obj.vars.length + ' 个' : '（无）') + ' · 数组：' + (obj.arrs && obj.arrs.length ? obj.arrs.length + ' 个' : '（无）'))
     : '选中对象后创建变量';
   els.varHint.textContent = hint;
   // 全屏节点库：已添加的变量名称列表（显示在「添加新变量」按钮下方）
   if (els.scratchVarList) {
     els.scratchVarList.innerHTML = '';
     if (obj && obj.vars && obj.vars.length) {
-      for (const name of obj.vars) {
+      for (const v of obj.vars) {
+        const vname = (v && v.name) || v;
         const item = document.createElement('div');
         item.className = 'scratch-var-item';
-        item.textContent = name;
+        const nm = document.createElement('span');
+        nm.className = 'sv-name';
+        // 显示名称 + 默认值；若选中了引用该变量的节点且有选中实例，显示该实例当前值（取消选择恢复默认值）
+        const dispVal = currentVarPreview(obj, vname);
+        nm.textContent = vname + (dispVal !== undefined ? ' = ' + dispVal : '');
+        const edit = document.createElement('button');
+        edit.className = 'sv-del';
+        edit.textContent = '📝';
+        edit.title = '设置变量「' + vname + '」的默认值（数字或字符串；布尔用 0/1）';
+        const del = document.createElement('button');
+        del.className = 'sv-del';
+        del.textContent = '🗑';
+        del.title = '删除变量「' + vname + '」';
+        del.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const i = obj.vars.indexOf(v);
+          if (i >= 0) obj.vars.splice(i, 1);
+          renderVarUI();
+          renderNodeGraph();
+        });
+        const box = document.createElement('div');
+        box.className = 'scratch-arr-table';
+        box.style.display = 'none';
+        edit.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const show = box.style.display === 'none';
+          box.style.display = show ? '' : 'none';
+          if (show) buildVarTable(box, v);
+        });
+        item.appendChild(nm);
+        item.appendChild(edit);
+        item.appendChild(del);
+        item.appendChild(box);
         els.scratchVarList.appendChild(item);
       }
     } else {
       const note = document.createElement('span');
-      note.className = 'n-note';
-      note.textContent = '（暂无变量，输入名称点「添加新变量」）';
+      note.className = 'n-note sv-note';
+      note.textContent = '（暂无变量）';
       els.scratchVarList.appendChild(note);
     }
   }
+  // 全屏节点库：数组列表（名称 + 删除 + 编辑表格，表格默认隐藏）
+  const arrList = document.getElementById('scratchArrList');
+  if (arrList) {
+    arrList.innerHTML = '';
+    if (obj && obj.arrs && obj.arrs.length) {
+      for (const a of obj.arrs) {
+        const aname = (a && a.name) || '';
+        const item = document.createElement('div');
+        item.className = 'scratch-var-item scratch-arr-item';
+        const nm = document.createElement('span');
+        nm.className = 'sv-name';
+        // 名称 + 容量 + 预览（选中引用该数组的节点且有实例时显示实例当前值）
+        const dispArr = currentArrPreview(obj, aname);
+        nm.textContent = aname + '（' + ((a && a.size) || 10) + '）' + (dispArr !== undefined ? ' = ' + dispArr : '');
+        const edit = document.createElement('button');
+        edit.className = 'sv-del';
+        edit.textContent = '📝';
+        edit.title = '编辑数组「' + aname + '」：数量与索引值（表格默认隐藏）';
+        const del = document.createElement('button');
+        del.className = 'sv-del';
+        del.textContent = '🗑';
+        del.title = '删除数组「' + aname + '」';
+        del.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const i = obj.arrs.indexOf(a);
+          if (i >= 0) obj.arrs.splice(i, 1);
+          renderVarUI();
+          renderNodeGraph();
+        });
+        const box = document.createElement('div');
+        box.className = 'scratch-arr-table';
+        box.style.display = 'none';
+        edit.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const show = box.style.display === 'none';
+          box.style.display = show ? '' : 'none';
+          if (show) buildArrTable(box, a);
+        });
+        item.appendChild(nm);
+        item.appendChild(edit);
+        item.appendChild(del);
+        item.appendChild(box);
+        arrList.appendChild(item);
+      }
+    } else {
+      const note = document.createElement('span');
+      note.className = 'n-note sv-note';
+      note.textContent = '（暂无数组）';
+      arrList.appendChild(note);
+    }
+  }
+}
+// 构建数组编辑表格：数量(容量) + 索引/值行
+function buildArrTable(box, arr) {
+  const size = (arr.size && arr.size > 0) ? arr.size : 10;
+  let groups = (arr.groups && arr.groups > 0) ? arr.groups : 1;
+  // values 为嵌套数组 [组][索引]（兼容旧扁平数据：应用时统一为嵌套）
+  let vals = arr.values;
+  if (!Array.isArray(vals) || !vals.length) vals = [];
+  if (!Array.isArray(vals[0])) vals = [vals]; // 旧扁平 → 当作第 0 组
+  let curGroup = 0;
+  box.innerHTML = '';
+  // 行1：数量（容量）
+  const row1 = document.createElement('div');
+  row1.className = 'arr-table-row';
+  row1.innerHTML = '<label>数量</label><input type="number" class="arr-size" min="1" max="1024" value="' + size + '">';
+  // 行2：组（组数 = 几维/几组；2 = 二维数组）
+  const rowGrp = document.createElement('div');
+  rowGrp.className = 'arr-table-row arr-grp-row';
+  const grpLabel = document.createElement('label');
+  grpLabel.textContent = '组';
+  const grpMinus = document.createElement('button');
+  grpMinus.className = 'sv-del';
+  grpMinus.textContent = '−';
+  const grpVal = document.createElement('span');
+  grpVal.className = 'arr-grp-val';
+  grpVal.textContent = groups;
+  const grpPlus = document.createElement('button');
+  grpPlus.className = 'sv-del';
+  grpPlus.textContent = '+';
+  rowGrp.appendChild(grpLabel);
+  rowGrp.appendChild(grpMinus);
+  rowGrp.appendChild(grpVal);
+  rowGrp.appendChild(grpPlus);
+  // 滑动条行（组 >= 2 时显示，左右滑动切换查看/编辑的组）
+  const slideRow = document.createElement('div');
+  slideRow.className = 'arr-table-row arr-slide-row';
+  slideRow.style.display = groups >= 2 ? '' : 'none';
+  const slide = document.createElement('input');
+  slide.type = 'range';
+  slide.min = 0;
+  slide.max = Math.max(0, groups - 1);
+  slide.value = 0;
+  slide.style.flex = '1';
+  const slideLabel = document.createElement('span');
+  slideLabel.className = 'arr-idx';
+  slideLabel.textContent = '第 1/' + groups + ' 组';
+  slideRow.appendChild(slideLabel);
+  slideRow.appendChild(slide);
+  // 值行
+  const rows = document.createElement('div');
+  rows.className = 'arr-rows';
+  const drawRows = function () {
+    rows.innerHTML = '';
+    const n = Math.max(1, parseInt(box.querySelector('.arr-size').value, 10) || 1);
+    const g = Math.min(Math.max(0, curGroup), Math.max(0, groups - 1));
+    const gv = vals[g] || [];
+    for (let i = 0; i < n; i++) {
+      const r = document.createElement('div');
+      r.className = 'arr-table-row';
+      r.innerHTML = '<span class="arr-idx">' + g + '.' + i + '</span><input type="number" class="arr-val" step="any" value="' + ((gv[i] === undefined) ? 0 : gv[i]) + '">';
+      rows.appendChild(r);
+    }
+  };
+  row1.querySelector('.arr-size').addEventListener('input', drawRows);
+  grpPlus.addEventListener('click', function () {
+    groups = Math.min(32, groups + 1);
+    grpVal.textContent = groups;
+    slide.max = groups - 1;
+    slideRow.style.display = groups >= 2 ? '' : 'none';
+    slideLabel.textContent = '第 ' + (curGroup + 1) + '/' + groups + ' 组';
+    drawRows();
+  });
+  grpMinus.addEventListener('click', function () {
+    if (groups <= 1) return;
+    groups = groups - 1;
+    if (curGroup >= groups) curGroup = groups - 1;
+    grpVal.textContent = groups;
+    slide.max = Math.max(0, groups - 1);
+    slide.value = curGroup;
+    slideRow.style.display = groups >= 2 ? '' : 'none';
+    slideLabel.textContent = '第 ' + (curGroup + 1) + '/' + groups + ' 组';
+    drawRows();
+  });
+  slide.addEventListener('input', function () {
+    curGroup = parseInt(slide.value, 10) || 0;
+    slideLabel.textContent = '第 ' + (curGroup + 1) + '/' + groups + ' 组';
+    drawRows();
+  });
+  const foot = document.createElement('div');
+  foot.className = 'arr-table-foot';
+  const apply = document.createElement('button');
+  apply.className = 'btn';
+  apply.textContent = '✔ 应用';
+  apply.addEventListener('click', function () {
+    const n = Math.max(1, parseInt(box.querySelector('.arr-size').value, 10) || 1);
+    arr.size = n;
+    arr.groups = groups;
+    // 收集所有组的值（先读当前输入，其他组保留原值）
+    const newVals = [];
+    for (let g = 0; g < groups; g++) {
+      const rowArr = [];
+      for (let i = 0; i < n; i++) rowArr.push(0);
+      newVals.push(rowArr);
+    }
+    // 保留旧值（非当前组）
+    for (let g = 0; g < groups && g < vals.length; g++) {
+      if (g === curGroup) continue;
+      for (let i = 0; i < n; i++) newVals[g][i] = (vals[g][i] === undefined) ? 0 : vals[g][i];
+    }
+    // 当前组读输入
+    rows.querySelectorAll('.arr-val').forEach(function (inp, i) {
+      const v = parseFloat(inp.value);
+      newVals[curGroup][i] = isFinite(v) ? v : 0;
+    });
+    arr.values = newVals;
+    renderVarUI();
+  });
+  const close = document.createElement('button');
+  close.className = 'btn';
+  close.textContent = '收起';
+  close.addEventListener('click', function () { box.style.display = 'none'; });
+  foot.appendChild(apply);
+  foot.appendChild(close);
+  box.appendChild(row1);
+  box.appendChild(rowGrp);
+  box.appendChild(slideRow);
+  box.appendChild(rows);
+  box.appendChild(foot);
+  drawRows();
+}
+function addArray(inputEl) {
+  // 未选中对象时自动用第一个对象
+  if (selObjIdx < 0 || !state.objects[selObjIdx]) {
+    if (state.objects.length) selObjIdx = 0;
+    else { alert('请先创建/选择一个对象。'); return; }
+    if (typeof renderScratchSide === 'function') renderScratchSide();
+    renderNodePanel();
+  }
+  const obj = state.objects[selObjIdx];
+  const name = (inputEl.value || '').trim();
+  if (!name) { alert('请输入数组名。'); return; }
+  if (obj.arrs.some(function (a) { return (a && a.name) === name; })) { alert('数组已存在：' + name); return; }
+  // 数组对象：{ name 名称, size 数量(容量), groups 组数(维度), values 索引值 }——表格默认隐藏，可编辑
+  obj.arrs.push({ name: name, size: 10, groups: 1, values: [] });
+  inputEl.value = '';
+  renderVarUI();
+  renderNodeGraph();
 }
 els.btnVarAdd.addEventListener('click', function () { addVariable(els.varNameInput); });
 els.scratchVarBtn.addEventListener('click', function () { addVariable(els.scratchVarNameInput); });
+const scratchArrBtn = document.getElementById('scratchArrBtn');
+if (scratchArrBtn) scratchArrBtn.addEventListener('click', function () { addArray(document.getElementById('scratchArrNameInput')); });
+
+// 变量 / 数组持久化：把每个对象的 vars/arrs 保存到浏览器，刷新后仍保留
+const OBJ_VARS_KEY = 'nd-obj-vars';
+function saveObjectVars() {
+  const data = {};
+  for (const obj of state.objects) {
+    data[obj.id] = { vars: obj.vars || [], arrs: obj.arrs || [] };
+  }
+  try { localStorage.setItem(OBJ_VARS_KEY, JSON.stringify(data)); } catch (e) { /* 存储满忽略 */ }
+}
+function loadObjectVars() {
+  try {
+    const data = JSON.parse(localStorage.getItem(OBJ_VARS_KEY));
+    if (data && typeof data === 'object') {
+      for (const obj of state.objects) {
+        const d = data[obj.id];
+        if (!d) continue;
+        if (Array.isArray(d.vars)) obj.vars = d.vars;
+        if (Array.isArray(d.arrs)) obj.arrs = d.arrs;
+      }
+    }
+  } catch (e) { /* 忽略 */ }
+}
+const scratchVarSave = document.getElementById('scratchVarSave');
+if (scratchVarSave) scratchVarSave.addEventListener('click', function () {
+  if (selObjIdx < 0 || !state.objects[selObjIdx]) { alert('请先选择一个对象（在对象列表中选择）。'); return; }
+  saveObjectVars();
+  const old = scratchVarSave.textContent;
+  scratchVarSave.textContent = '✅ 已保存';
+  setTimeout(function () { scratchVarSave.textContent = old; }, 2000);
+});
+
+// 声音导入 / 管理（小面板与全屏编辑器共用同一个隐藏文件选择框；
+// change 按文件类型分发：音频 → importSoundFile，JSON 工程 → importSongFile，见文件末尾）
+const btnSoundImport = document.getElementById('btnSoundImport');
+const scratchBtnSoundImport = document.getElementById('scratchBtnSoundImport');
+btnSoundImport.addEventListener('click', function () { soundFileInput.click(); });
+scratchBtnSoundImport.addEventListener('click', function () { soundFileInput.click(); });
+renderSoundUI();
+
+// 声音导入：mp3 / wav / ogg 等音频 → importSoundFile；音乐编辑器 JSON 工程 → importSongFile（自动转码 WAV）
+const btnMusicEditor = document.getElementById('btnMusicEditor');
+const scratchBtnMusicEditor = document.getElementById('scratchBtnMusicEditor');
+if (soundFileInput) soundFileInput.addEventListener('change', function () {
+  const f = soundFileInput.files && soundFileInput.files[0];
+  if (f) {
+    if (/\.json$/i.test(f.name) || f.type === 'application/json' || f.type === 'text/json') importSongFile(f);
+    else importSoundFile(f);
+  }
+  soundFileInput.value = '';
+});
+// 音乐编辑器快捷按钮：新标签页打开（相对路径：无限像素画布上一级目录的 音乐编辑器/）
+function openMusicEditor() { window.open('../音乐编辑器/音乐编辑器.html', '_blank'); }
+if (btnMusicEditor) btnMusicEditor.addEventListener('click', openMusicEditor);
+if (scratchBtnMusicEditor) scratchBtnMusicEditor.addEventListener('click', openMusicEditor);
 
 // 全屏模式
-els.btnScratchMax.addEventListener('click', openScratchMode);
+els.scratchSearch.addEventListener('input', function () { fillScratchPalette(); });
+els.scratchSearch.addEventListener('keydown', function (e) { if (e.key === 'Escape') { this.value = ''; fillScratchPalette(); } });
+els.btnScratchMax.addEventListener('click', function () { scratchFromFloat = false; openScratchMode(); }); // 小面板「放大」→ 全屏，收回回面板
 els.btnScratchBack.addEventListener('click', closeScratchMode);
+// 画布专注模式：隐藏节点分类/节点库/舞台，画布铺满（再次点击恢复）
+let scratchCanvasFocus = false;
+const btnCanvasFocus = document.getElementById('btnCanvasFocus');
+const scratchBody = document.getElementById('scratchBody');
+if (btnCanvasFocus && scratchBody) {
+  btnCanvasFocus.addEventListener('click', function () {
+    scratchCanvasFocus = !scratchCanvasFocus;
+    scratchBody.classList.toggle('canvas-focus', scratchCanvasFocus);
+    btnCanvasFocus.textContent = scratchCanvasFocus ? '⤢ 恢复布局' : '⛶ 放大画布';
+    btnCanvasFocus.title = scratchCanvasFocus ? '恢复显示节点分类/节点库/舞台' : '放大画布：隐藏节点分类/节点库/舞台，画布铺满（再次点击恢复）';
+    renderNodeGraph(); // 画布尺寸变化后重绘节点图
+  });
+}
 els.btnScratchRun.addEventListener('click', function () {
   state.nodesRunning = !state.nodesRunning;
+  if (!state.nodesRunning) stopAllSounds(); // 停止全部运行时同时停止所有声音
   updateRunButton();
   requestRender();
 });
-els.stageSize.addEventListener('input', resizeStage);
 els.stageGrid.addEventListener('input', function () {
   els.stageGridVal.textContent = els.stageGrid.value;
 });
+// 舞台右键：阻止浏览器默认菜单（另存为/查看图像等）
+els.stageCanvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+els.stageBox.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 // 舞台滚轮：直接调整网格大小（预览倍率）
 els.stageBox.addEventListener('wheel', function (e) {
   if (!scratchModeOn) return;
@@ -2237,10 +4601,184 @@ els.stageBox.addEventListener('wheel', function (e) {
   els.stageGrid.value = g;
   els.stageGridVal.textContent = g;
 }, { passive: false });
-// 舞台拖动平移（网格放大后预览超出舞台，拖动查看）；双击重置
+// 舞台交互：左键/中键拖动实例（点中实例则移动它）；空白处拖动 = 平移视图（网格放大查看）；双击重置视图
+let dragStageInst = null; // { inst, dx, dy }
+function stageScreenToWorld(cx, cy) {
+  // cx/cy 为相对 stageCanvas 左上角的 CSS 像素
+  const grid = Math.max(5, +els.stageGrid.value || 100) / 100;
+  const s = (stageView.baseS || 1) * grid; // CSS px / 格
+  return { x: (stageView.ox || 0) + cx / s, y: (stageView.oy || 0) + cy / s };
+}
 els.stageBox.addEventListener('pointerdown', function (e) {
   if (!scratchModeOn) return;
-  stagePan = { x: e.clientX - stageView.ox, y: e.clientY - stageView.oy };
+  const rect = els.stageCanvas.getBoundingClientRect();
+  const w = stageScreenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+  let best = null, bestD = 1e9;
+  for (const inst of state.instances) {
+    const dx = inst.x - w.x, dy = inst.y - w.y, dd = dx * dx + dy * dy;
+    if (dd < bestD) { bestD = dd; best = inst; }
+  }
+  if (e.button !== 1 && best && bestD < 24) { // 点中实例（左键）拖动移动实例；中键始终平移视图
+    dragStageInst = { inst: best, dx: best.x - w.x, dy: best.y - w.y, moved: false, rect: rect };
+  } else {
+    // 空白处平移视图：记录起点世界坐标与每格像素比
+    const grid = Math.max(5, +els.stageGrid.value || 100) / 100;
+    stagePan = { x: e.clientX, y: e.clientY, ox: stageView.ox || 0, oy: stageView.oy || 0, s: (stageView.baseS || 1) * grid };
+  }
+});
+els.stageBox.addEventListener('dblclick', function () {
+  stageView = { ox: 0, oy: 0 };
+});
+// 舞台拖动实例：pointermove 更新实例位置
+(function () {
+  const pm = document.addEventListener('pointermove', function (e) {
+    if (!dragStageInst) return;
+    const rect = dragStageInst.rect || els.stageCanvas.getBoundingClientRect();
+    const w = stageScreenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    dragStageInst.inst.x = Math.round(w.x + dragStageInst.dx);
+    dragStageInst.inst.y = Math.round(w.y + dragStageInst.dy);
+    dragStageInst.moved = true;
+    requestRender();
+  });
+  document.addEventListener('pointerup', function () { dragStageInst = null; });
+})();
+// 舞台右栏分界拖拽：鼠标按住右侧栏左边缘可调整舞台大小
+let rightResize = null;
+// 分界拖拽把手（右栏左缘竖条，避免被画布遮挡）：按住拖动调整舞台大小
+const stageDivider = document.getElementById('stageDivider');
+(stageDivider || els.scratchRight).addEventListener('pointerdown', function (e) {
+  if (scratchModeOn) {
+    const r = els.scratchRight.getBoundingClientRect();
+    rightResize = { x: e.clientX, w: r.width };
+    e.preventDefault();
+  }
+});
+document.addEventListener('pointermove', function (e) {
+  if (!rightResize) return;
+  const w = Math.max(180, Math.min(720, rightResize.w - (e.clientX - rightResize.x)));
+  els.scratchRight.style.flexBasis = w + 'px';
+  applyStageSize(Math.round(Math.max(120, Math.min(w - 20, cssH() * 0.6))));
+});
+document.addEventListener('pointerup', function () { rightResize = null; });
+// 舞台浮动窗口：可拖出、可拖动位置、可调整大小
+const btnStageFloat = document.getElementById('btnStageFloat');
+const btnStageFloatBack = document.getElementById('btnStageFloatBack');
+let winDrag = null, winResize = null;
+if (btnStageFloat) btnStageFloat.addEventListener('click', function () {
+  stageFloating = !stageFloating;
+  if (stageFloating) {
+    document.getElementById('stageFloatWin').style.display = 'block';
+    document.getElementById('stageFloatWin').style.width = '440px';
+    document.getElementById('stageFloatWin').style.height = '520px';
+    document.getElementById('stageFloatWin').style.left = Math.max(10, window.innerWidth - 460) + 'px';
+    document.getElementById('stageFloatWin').style.top = '60px';
+    document.getElementById('stageFloatBody').appendChild(els.stageBox);
+  } else {
+    document.getElementById('stageFloatWin').style.display = 'none';
+    // 收回：舞台放回右侧栏标题与控件之间
+    const ctrl = document.getElementById('stageCtrl');
+    if (ctrl && els.scratchRight.contains(ctrl)) els.scratchRight.insertBefore(els.stageBox, ctrl);
+    else els.scratchRight.appendChild(els.stageBox);
+  }
+  resizeStage();
+});
+if (btnStageFloatBack) btnStageFloatBack.addEventListener('click', function () {
+  stageFloating = false;
+  document.getElementById('stageFloatWin').style.display = 'none';
+  const ctrl = document.getElementById('stageCtrl');
+  if (ctrl && els.scratchRight.contains(ctrl)) els.scratchRight.insertBefore(els.stageBox, ctrl);
+  else els.scratchRight.appendChild(els.stageBox);
+  resizeStage();
+});
+const stageFloatBar = document.getElementById('stageFloatBar');
+if (stageFloatBar) stageFloatBar.addEventListener('pointerdown', function (e) {
+  winDrag = { x: e.clientX, y: e.clientY, l: document.getElementById('stageFloatWin').offsetLeft, t: document.getElementById('stageFloatWin').offsetTop, win: document.getElementById('stageFloatWin') };
+  e.preventDefault();
+});
+// ---------- 小节点编辑器浮动窗口 ----------
+let nodeFloating = false;
+const nodeFloatWin = document.getElementById('nodeFloatWin');
+const btnNodeFloat = document.getElementById('btnNodeFloat');
+const btnNodeFloatBack = document.getElementById('btnNodeFloatBack');
+const btnNodeFloatMax = document.getElementById('btnNodeFloatMax');
+const btnNodeFloatClose = document.getElementById('btnNodeFloatClose');
+const nodeFloatBody = document.getElementById('nodeFloatBody');
+const nodeFloatBar = document.getElementById('nodeFloatBar');
+const nodeFloatResize = document.getElementById('nodeFloatResize');
+if (btnNodeFloat) btnNodeFloat.addEventListener('click', function () {
+  nodeFloating = true;
+  nodeFloatWin.style.display = 'block';
+  nodeFloatWin.style.width = Math.max(560, els.nodePanel.offsetWidth || 720) + 'px';
+  nodeFloatWin.style.height = Math.max(480, els.nodePanel.offsetHeight || 620) + 'px';
+  nodeFloatWin.style.left = Math.max(8, window.innerWidth - nodeFloatWin.offsetWidth - 16) + 'px';
+  nodeFloatWin.style.top = '60px';
+  nodeFloatBody.appendChild(document.getElementById('nodeBody'));
+  els.nodePanel.style.display = 'none';
+  window.__nodeEditorOpen = true;
+  renderNodeGraph();
+  requestAnimationFrame(function () { renderNodeGraph(); });
+});
+if (btnNodeFloatBack) btnNodeFloatBack.addEventListener('click', function () {
+  nodeFloating = false;
+  nodeFloatWin.style.display = 'none';
+  els.nodePanel.appendChild(document.getElementById('nodeBody'));
+  els.nodePanel.style.display = '';
+  if (els.nodePanel.classList.contains('open')) window.__nodeEditorOpen = true;
+  else window.__nodeEditorOpen = false;
+  renderNodeGraph();
+});
+if (btnNodeFloatClose) btnNodeFloatClose.addEventListener('click', function () {
+  // 直接关闭节点编辑器（不回到小面板）：nodeBody 放回面板但面板保持隐藏，编辑器整体关闭
+  nodeFloating = false;
+  scratchFromFloat = false;
+  nodeFloatWin.style.display = 'none';
+  els.nodePanel.appendChild(document.getElementById('nodeBody'));
+  els.nodePanel.style.display = 'none';
+  els.nodePanel.classList.remove('open');
+  window.__nodeEditorOpen = false;
+});
+if (btnNodeFloatMax) btnNodeFloatMax.addEventListener('click', function () {
+  scratchFromFloat = true; // 从浮动窗进入全屏：收回时回到浮动窗
+  openScratchMode();
+  nodeFloatWin.style.display = 'none'; // 放大后隐藏浮动窗，只保留全屏编辑器
+});
+if (nodeFloatBar) nodeFloatBar.addEventListener('pointerdown', function (e) {
+  winDrag = { x: e.clientX, y: e.clientY, l: nodeFloatWin.offsetLeft, t: nodeFloatWin.offsetTop, win: nodeFloatWin };
+  e.preventDefault();
+});
+if (nodeFloatResize) nodeFloatResize.addEventListener('pointerdown', function (e) {
+  winResize = { x: e.clientX, y: e.clientY, w: nodeFloatWin.offsetWidth, h: nodeFloatWin.offsetHeight, win: nodeFloatWin };
+  e.preventDefault();
+});
+const stageFloatResize = document.getElementById('stageFloatResize');
+if (stageFloatResize) stageFloatResize.addEventListener('pointerdown', function (e) {
+  winResize = { x: e.clientX, y: e.clientY, w: document.getElementById('stageFloatWin').offsetWidth, h: document.getElementById('stageFloatWin').offsetHeight, win: document.getElementById('stageFloatWin') };
+  e.preventDefault();
+});
+document.addEventListener('pointermove', function (e) {
+  if (winDrag && winDrag.win) {
+    winDrag.win.style.left = (winDrag.l + e.clientX - winDrag.x) + 'px';
+    winDrag.win.style.top = (winDrag.t + e.clientY - winDrag.y) + 'px';
+  }
+  if (winResize && winResize.win) {
+    const w = Math.max(240, winResize.w + e.clientX - winResize.x);
+    const h = Math.max(280, winResize.h + e.clientY - winResize.y);
+    winResize.win.style.width = w + 'px';
+    winResize.win.style.height = h + 'px';
+    if (winResize.win.id === 'stageFloatWin') resizeStage();
+  }
+});
+document.addEventListener('pointerup', function () { winDrag = null; winResize = null; });
+// 重置视图：视图回中铺满舞台 + 对象实例归位画布中心
+const btnStageReset = document.getElementById('btnStageReset');
+if (btnStageReset) btnStageReset.addEventListener('click', function () {
+  fitStageView(); // 视图：内容自适应铺满舞台（等比、格子正方、居中）
+  const b = computeContentBounds();
+  const cx = b ? Math.round((b.x0 + b.x1) / 2) : 100;
+  const cy = b ? Math.round((b.y0 + b.y1) / 2) : 100;
+  for (const inst of state.instances) { inst.x = cx; inst.y = cy; } // 对象归位内容中心
+  requestRender();
+  if (typeof updateInstInfo === 'function') updateInstInfo();
 });
 els.stageBox.addEventListener('dblclick', function () {
   stageView = { ox: 0, oy: 0 };
@@ -2262,3 +4800,505 @@ els.scratchBtnDelInst.addEventListener('click', function () {
   else alert('请先选择要删除的实例（在画布点击或在实例列表中选中）。');
 });
 requestAnimationFrame(stageLoop);
+
+// ---------- 自制节点 JS 在线编辑器 ----------
+const nodeJsEl = function (id) { return document.getElementById(id); };
+let editingPlugin = null; // 当前编辑器正在编辑的插件对象（插件库左键打开）
+let editingNewPlugin = false; // 当前编辑器是否为「新建自制插件」场景（保存时按插件处理）
+function openNodeJsEditor(code, title, opts) {
+  editingPlugin = (opts && opts.plugin) || null;
+  editingNewPlugin = !!(opts && opts.newPlugin);
+  // 记录当前编辑的节点 id（供删除按钮使用）
+  const m0 = code.match(/registerNodeType\(\s*['"]([^'"]+)['"]/);
+  editingNodeId = m0 ? m0[1] : null;
+  nodeJsEl('nodeJsDelete').style.display = editingNewPlugin ? 'none' : '';
+  if (editingPlugin) {
+    // 编辑插件：删除按钮显示「删除插件」
+    nodeJsEl('nodeJsDelete').textContent = '🗑 删除插件';
+    nodeJsEl('nodeJsDelete').title = '删除当前编辑的插件（同时清除本地保存）';
+  } else {
+    nodeJsEl('nodeJsDelete').textContent = '🗑 删除节点';
+    nodeJsEl('nodeJsDelete').title = '删除当前编辑的节点（同时清除本地保存）';
+  }
+  renderNodeJsEditor(code);
+  nodeJsEl('nodeJsTitle').textContent = title || '编辑自制节点';
+  nodeJsEl('nodeJsErr').textContent = '';
+  nodeJsEl('nodeJsModal').classList.add('open');
+  // 锁定策略：编辑「节点/插件」默认锁定（需点锁按钮解锁）；「新建自制节点」默认可编辑
+  const isNew = opts && opts.newNode;
+  setNodeJsLocked(!isNew);
+  if (!isNew) nodeJsEl('nodeJsEdit').focus();
+}
+// 锁定 / 解锁节点 JS 编辑器：锁定时禁止编辑（只读），解锁后才能修改文本
+function setNodeJsLocked(locked) {
+  const edit = nodeJsEl('nodeJsEdit');
+  const lockBtn = nodeJsEl('nodeJsLock');
+  if (!edit || !lockBtn) return;
+  edit.contentEditable = locked ? 'false' : 'true';
+  edit.classList.toggle('node-js-locked', locked);
+  lockBtn.textContent = locked ? '🔒 已锁定' : '🔓 解锁中';
+  lockBtn.title = locked ? '点击解锁：允许编辑文本' : '点击锁定：禁止编辑文本';
+  // 锁定时移除焦点，防止光标闪烁
+  if (locked && document.activeElement === edit) edit.blur();
+}
+let nodeJsLocked = true;
+nodeJsEl('nodeJsLock').addEventListener('click', function () {
+  nodeJsLocked = !nodeJsLocked;
+  setNodeJsLocked(nodeJsLocked);
+});
+let editingNodeId = null;
+// ---------- JS 语法高亮（VSCode 风格配色） ----------
+function escHtml(v) {
+  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function hlJS(code) {
+  let h = escHtml(code);
+  // 单次正则一次成型：注释/字符串/关键字/数字按当前位置互斥匹配，立即包裹成 span，
+  // 不会出现「先替换生成 span、后续正则又匹配 span 属性」的二次嵌套（修复 class=class= 与 === 被吞）
+  h = h.replace(
+    /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|'[^'\\\n]*(?:\\.[^'\\\n]*)*'|"[^"\\\n]*(?:\\.[^"\\\n]*)*"|`[^`\\]*(?:\\.[^`\\]*)*`|\b(?:function|return|const|let|var|if|else|for|while|new|typeof|instanceof|true|false|null|undefined|this|in|of|break|continue|switch|case|default|try|catch|throw|delete|void|class|extends|import|export|yield|async|await)\b|\b\d+\.?\d*\b)/g,
+    function (m) {
+      if (m.charAt(0) === '/' && (m.charAt(1) === '/' || m.charAt(1) === '*')) return '<span class="tok-cmt">' + m + '</span>';
+      if (m.charAt(0) === '\'' || m.charAt(0) === '"' || m.charAt(0) === '`') return '<span class="tok-str">' + m + '</span>';
+      if (/^\d/.test(m)) return '<span class="tok-num">' + m + '</span>';
+      return '<span class="tok-kw">' + m + '</span>';
+    }
+  );
+  return h;
+}
+// 渲染高亮内容到单层可编辑区（换行用 <br>，与 getEditText 互逆）
+function renderNodeJsEditor(text) {
+  const el = nodeJsEl('nodeJsEdit');
+  // 输入先清洗（防二次高亮：若传入的是渲染后的 HTML 文本则还原为纯代码）
+  const t = sanitizeCodeText(text == null ? '' : text);
+  el.innerHTML = t ? hlJS(t).replace(/\n/g, '<br>') : '';
+}
+// 从可编辑区提取纯文本（<br>/<div> 边界还原为换行）
+function getEditText() {
+  const el = nodeJsEl('nodeJsEdit');
+  const out = [];
+  (function walk(n) {
+    if (n.nodeType === 3) out.push(n.textContent);
+    else if (n.nodeName === 'BR') out.push('\n');
+    else if (n.nodeName === 'DIV' || n.nodeName === 'P') { for (let i = 0; i < n.childNodes.length; i++) walk(n.childNodes[i]); out.push('\n'); }
+    else { for (let i = 0; i < n.childNodes.length; i++) walk(n.childNodes[i]); }
+  })(el);
+  // 清洗可能混入的 HTML 残骸后返回纯代码；contenteditable 会把空格存成 \u00A0，还原为普通空格
+  return sanitizeCodeText(out.join('')).replace(/\u00A0/g, ' ').replace(/\n+$/, '');
+}
+// 渲染前清洗：把可能混入的 HTML 残骸（如误粘贴的高亮 span、转义实体）还原为纯文本，
+// 保证 hlJS 永远只处理纯文本代码
+function sanitizeCodeText(t) {
+  let s = String(t == null ? '' : t);
+  // 还原被转义的实体
+  s = s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  // 剥离完整 span 标签
+  s = s.replace(/<span[^>]*>/g, '').replace(/<\/span>/g, '');
+  // 剥离「渲染后 HTML 的可见残片」（用户从聊天/网页复制的污染文本常见形态）：
+  //   class=class="tok-str">"tok-cmt">…  /  class="tok-cmt">…  /  "tok-cmt">…
+  s = s.replace(/class=class="tok-(?:str|cmt|kw|num)"\s*>\s*"tok-(?:str|cmt|kw|num)">/g, '');
+  s = s.replace(/class="tok-(?:str|cmt|kw|num)">/g, '');
+  s = s.replace(/"tok-(?:str|cmt|kw|num)">/g, '');
+  s = s.replace(/<span/g, '');
+  // 还原 <br> / <div> / <p> 边界为换行（只剥离已知标签，不误删代码中的 < 文本）
+  s = s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(div|p)>/gi, '\n');
+  s = s.replace(/<(div|p|font|b|i|u|em|strong)\b[^>]*>/gi, '');
+  // 去掉行首行尾残留的空格与孤立空行（粘贴污染文本常带）
+  return s;
+}
+// 输入时不重渲染（避免中文输入法被打断；选择/光标天然对齐，因为只有一层）
+nodeJsEl('nodeJsEdit').addEventListener('blur', function () {
+  renderNodeJsEditor(getEditText());
+});
+// 空格键：强制插入普通空格（contenteditable 直接输入会存成 \u00A0，保存时 JS 解析报错，打不出"真正的空格"）
+nodeJsEl('nodeJsEdit').addEventListener('keydown', function (e) {
+  if (e.key === ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    document.execCommand('insertText', false, ' ');
+  }
+});
+// 粘贴强制为纯文本：禁止富文本 HTML 插入（防止高亮 span 污染代码、字符错乱）
+nodeJsEl('nodeJsEdit').addEventListener('paste', function (e) {
+  e.preventDefault();
+  const txt = (e.clipboardData || window.clipboardData).getData('text/plain');
+  const clean = sanitizeCodeText(txt);
+  // 在光标处插入纯文本（保留原换行/缩进）
+  document.execCommand('insertText', false, clean);
+});
+// ---------- 导入 / 导出 JS ----------
+nodeJsEl('nodeJsImport').addEventListener('click', function () { nodeJsEl('nodeJsImportFile').click(); });
+nodeJsEl('nodeJsImportFile').addEventListener('change', function () {
+  const f = this.files && this.files[0];
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = function () { renderNodeJsEditor(String(rd.result || '')); };
+  rd.readAsText(f);
+  this.value = '';
+});
+nodeJsEl('nodeJsExport').addEventListener('click', function () {
+  const code = getEditText();
+  const blob = new Blob([code], { type: 'text/javascript;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const m = code.match(/registerNodeType\(\s*['"]([^'"]+)['"]/);
+  a.download = (m ? m[1] : 'custom-node') + '.js';
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+});
+function closeNodeJsEditor() {
+  editingPlugin = null;
+  editingNewPlugin = false;
+  nodeJsEl('nodeJsModal').classList.remove('open');
+}
+// 删除当前编辑的节点 / 插件
+function deleteNodeJs() {
+  // 编辑插件：删除插件
+  if (editingPlugin) {
+    if (!confirm('确定删除插件「' + (editingPlugin.name || '') + '」吗？\n画布上已使用该插件的节点将失效。')) return;
+    // 移除插件注册的所有节点
+    if (editingPlugin.code) {
+      const re = /registerNodeType\s*\(\s*['"]([^'"]+)['"]/g;
+      let m;
+      while ((m = re.exec(editingPlugin.code))) { delete NODE_TYPES[m[1]]; delete NODE_DEF_SRC[m[1]]; }
+    }
+    // 从已保存/临时插件列表移除
+    if (editingPlugin.saved) {
+      const cur = loadPlugins().filter(function (x) { return x.time !== editingPlugin.time || x.name !== editingPlugin.name; });
+      savePlugins(cur);
+    } else {
+      tempPlugins = tempPlugins.filter(function (x) { return x !== editingPlugin; });
+    }
+    renderPluginLib();
+    refreshNodeLibrary();
+    closeNodeJsEditor();
+    alert('插件「' + (editingPlugin.name || '') + '」已删除。');
+    return;
+  }
+  if (!editingNodeId) { nodeJsEl('nodeJsErr').textContent = '当前内容未包含可删除的节点（缺少 registerNodeType("id", …)）。'; return; }
+  if (!confirm('确定删除节点「' + editingNodeId + '」吗？（会同时清除本地保存，画布上已使用的该节点将失效）')) return;
+  delete NODE_TYPES[editingNodeId];
+  delete NODE_DEF_SRC[editingNodeId];
+  deleteCustomNode(editingNodeId);
+  refreshNodeLibrary();
+  closeNodeJsEditor();
+}
+nodeJsEl('nodeJsDelete').addEventListener('click', deleteNodeJs);
+function refreshNodeLibrary() {
+  const keep = els.nodeCatSelect ? els.nodeCatSelect.value : '自制';
+  fillNodeCatSelect();
+  if (els.nodeCatSelect && keep && NODE_CATS[keep]) { els.nodeCatSelect.value = keep; fillNodeTypeSelect(); }
+  if (typeof fillScratchCats === 'function') { fillScratchCats(); fillScratchPalette(); }
+  renderNodeGraph();
+}
+function saveNodeJs() {
+  const code = getEditText();
+  // 新建自制插件场景（「自制插件」按钮打开）：按插件处理，加入插件库
+  if (editingNewPlugin) {
+    try { applyPluginCode(code); }
+    catch (e) { nodeJsEl('nodeJsErr').textContent = 'JS 错误：' + e.message; return; }
+    // 插件名：优先取顶部「// 插件名称：XXX」注释；否则取第一个真实 registerNodeType 的 id
+    let pname = null;
+    const nameLine = code.split('\n').find(function (l) {
+      return /^\s*\/\/\s*插件名称\s*[:：]\s*(\S.*)$/.test(l);
+    });
+    if (nameLine) {
+      const mm = nameLine.match(/^\s*\/\/\s*插件名称\s*[:：]\s*(\S.*)$/);
+      if (mm && mm[1].trim()) pname = mm[1].trim();
+    }
+    if (!pname) {
+      let firstId = null;
+      const lines = code.split('\n');
+      for (let li = 0; li < lines.length; li++) {
+        const line = lines[li].trim();
+        if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) continue;
+        const m2 = line.match(/registerNodeType\(\s*['"]([^'"]+)['"]/);
+        if (m2) { firstId = m2[1]; break; }
+      }
+      pname = firstId || '自制插件';
+    }
+    tempPlugins.unshift({ name: pname, code: code, time: Date.now() });
+    renderPluginLib();
+    closeNodeJsEditor();
+    alert('插件「' + pname + '」已生成并加入插件库（点击插件库【保存】可永久保存，刷新后仍保留）。');
+    return;
+  }
+  // 插件编辑模式：更新插件源码并重新注册
+  if (editingPlugin) {
+    try { (0, eval)(code); }
+    catch (e) { nodeJsEl('nodeJsErr').textContent = 'JS 错误：' + e.message; return; }
+    const pname = editingPlugin.name || '';
+    editingPlugin.code = code;
+    if (editingPlugin.saved) {
+      const arr = loadPlugins().map(function (x) {
+        return (x.time === editingPlugin.time && x.name === editingPlugin.name) ? { name: x.name, code: code, time: x.time } : x;
+      });
+      savePlugins(arr);
+    }
+    renderPluginLib();
+    closeNodeJsEditor();
+    alert('插件「' + pname + '」已更新。');
+    return;
+  }
+  const m = code.match(/registerNodeType\(\s*['"]([^'"]+)['"]/);
+  let id = m ? m[1] : null;
+  try {
+    (0, eval)(code);
+  } catch (e) {
+    nodeJsEl('nodeJsErr').textContent = 'JS 错误：' + e.message;
+    return;
+  }
+  if (id) {
+    saveCustomNode(id, code);
+    editingNodeId = id; // 保存后更新当前编辑的节点 id（删除按钮用）
+    refreshNodeLibrary();
+    closeNodeJsEditor();
+  } else {
+    nodeJsEl('nodeJsErr').textContent = '未找到 registerNodeType(' + "'id'" + ', { … }) 调用，无法确定节点 id。';
+  }
+}
+nodeJsEl('nodeJsSave').addEventListener('click', saveNodeJs);
+nodeJsEl('nodeJsClose').addEventListener('click', closeNodeJsEditor);
+nodeJsEl('nodeJsCancel').addEventListener('click', closeNodeJsEditor);
+// 新建自制节点：预填模板
+const NODE_TEMPLATE = [
+  '// 在下方编写你的自制节点（保存后立即生效并自动存入浏览器）',
+  '// 示例：一个动作节点（每帧执行，把实例向下移动）',
+  "registerNodeType('myMoveDown', {",
+  "  name: '向下移动',",
+  "  category: '自制',",
+  "  desc: '自制节点示例：每帧向下移动一格',",
+  "  flowIn: true, flowOut: true,",
+  "  params: [{ key: 'speed', label: '速度', type: 'number', def: 1, min: 0, max: 10 }],",
+  "  run: function (inputs, inst, p, st) {",
+  "    inst.y += p.speed;",
+  "    requestRender();",
+  "  },",
+  '});',
+  '',
+  '// 更多：端口 sockets、数据节点 value、下拉参数 options 等用法',
+  '// 见 node-ther.js 顶部的 registerNodeType 参数说明',
+].join('\n');
+function openNewNodeEditor() {
+  openNodeJsEditor(NODE_TEMPLATE, '新建自制节点（在文字框中编写 JS）', { newNode: true });
+}
+nodeJsEl('btnNodeAddCustom').addEventListener('click', openNewNodeEditor);
+nodeJsEl('scratchBtnAddCustom').addEventListener('click', openNewNodeEditor);
+
+// ---------- 自制插件模板（内置插件示例，用于「自制插件」按钮） ----------
+const PLUGIN_TEMPLATE = `// 插件名称：插件示例
+// 修改上面一行的名称可重命名此插件；下面为插件节点代码（可直接修改）。
+// ============================================================
+// 插件示例节点（模板）：可直接根据此文件修改，制作自己的插件
+// 用法：📂 导入本文件（节点编辑器 → 插件库 → 导入插件）
+//       导入后本文件注册的所有节点自动出现在「插件」分类（插件库）中，
+//       节点按钮右键可随时编辑 JS；点插件库的 × 删除插件，刷新后节点一并移除。
+// 参考：同目录下的 自制示例.js（自制分类）讲解各字段含义，
+//       本文件是「插件」分类的完整示例，包含 5 个节点：
+//
+//   【插件示例】  综合模板：流程 + 输入/输出端口 + 参数 + 显示框（最全）
+//   【插件示例1】 流程动作节点：每帧执行 run（如每帧移动/计数）
+//   【插件示例2】 数据节点：value 返回数值，供其他节点连线取值
+//   【插件示例3】 检测节点：value 返回 真/假（0/1），可做条件
+//   【插件示例4】 参数+端口节点：选择框、数字、输入框与输入/输出端口组合
+//
+// ────────────────────────────────────────────────
+// 一、如何添加自己的插件节点？
+// ────────────────────────────────────────────────
+//  1) 复制下面任意一个 registerNodeType('xxx', { ... })，改名为你的节点 id（唯一）。
+//  2) 修改 name / category / desc / sockets / params / run / value。
+//  3) 保存为 .js 文件，在节点编辑器 → 插件库 → 📂 导入插件 导入即可。
+//
+//  ─ 字段速查 ─
+//    name      节点在节点库/画布上显示的名称
+//    category  分类（插件示例统一用 '插件'，会进入插件库；也可用 '自制' 等）
+//    desc      鼠标悬停说明
+//    flowIn / flowOut  顶部执行流端口：连入动作链后每帧执行 run
+//    sockets   输入端口（左侧 ●）/ 输出端口（右侧 ●）
+//    params    参数框（选择框 / 数字框 / 文本输入框 / 颜色框）
+//    displayVal 底部「值」显示框（实时显示 value 主输出）
+//    run       动作函数（flowIn/flowOut 时每帧执行）
+//    value     数据函数（从输出端口取数时调用；第 5 参 fromSock 区分输出哪个端口）
+//
+//  ─ 输入/输出读取 ─
+//    run/value 的第一参 inputs：inputs.端口key 读连线值（未连线为 null，要判空）
+//    参数值用 p.参数key 读取；实例独立状态用 st.xxx（每实例一份）
+//
+// ────────────────────────────────────────────────
+// 二、各节点对应结构示意
+// ────────────────────────────────────────────────
+// 【插件示例】：
+//   ◀ 插件示例 ▶
+//   ● 数值A / 数值B ●  ← 输入（左）/ 输出（右）
+//   ● [选择框 ▼]      ← 参数 + 左侧输入端口
+//   [开关] ●          ← 参数 + 右侧输出端口
+//   ● [显示框]        ← 显示框 + 左侧输入端口
+// 【插件示例1】：◀ 插件示例1 ▶（flow 流程节点，每帧执行 run）
+// 【插件示例2】：◀ 插件示例2 ▶（数据节点：● 数值 → 返回）
+// 【插件示例3】：◀ 插件示例3 ▶（检测节点：● 比较值 → 返回 真/假）
+// 【插件示例4】：◀ 插件示例4 ▶（参数+端口综合：选择框/数字/输入框 ● 端口）
+// ============================================================
+
+// ---------- 【插件示例】综合模板 ----------
+// 展示插件节点的完整能力：流程、输入/输出端口、参数（含带端口参数）、显示框
+registerNodeType('pluginExample', {
+  name: '插件示例',            // 节点名称
+  category: '插件',            // 分类：插件（进入插件库）
+  flowIn: true, flowOut: true, // 顶部执行流输入/输出（可连入动作链，每帧执行 run）
+  displayVal: true,            // 底部「值」显示框（实时显示 value 主输出值）
+  desc: '插件综合模板：输入A/输出A、选择框（带输入端口）、开关（带输出端口）、显示框（带输入端口），可按需修改后另存为你的插件节点',
+  sockets: [
+    // 输入端口（左侧 ●）
+    { key: 'a', dir: 'in', type: 'num', label: '数值A' },
+    // 选择框左侧输入端口（连线时优先使用连线值）
+    { key: 'selIn', dir: 'in', type: 'num', label: '选择框' },
+    // 显示框左侧输入端口（显示该输入的值）
+    { key: 'dispIn', dir: 'in', type: 'num', label: '显示框' },
+    // 输出端口（右侧 ●）
+    { key: 'outA', dir: 'out', type: 'num', label: '数值A' },
+    // 开关右侧输出端口（输出开关当前值 0/1）
+    { key: 'swOut', dir: 'out', type: 'num', label: '开关' },
+  ],
+  params: [
+    // 选择框 + 输入端口：连线时参数框自动禁用、优先用连线值（inputs.selIn）
+    { key: 'sel', label: '选择框', type: 'select', def: 'x', port: 'selIn', options: function () { return [{ v: 'x', label: '选项X' }, { v: 'y', label: '选项Y' }]; } },
+    // 开关 + 输出端口：输出当前选中的值（inputs.swOut）
+    { key: 'sw', label: '开关', type: 'select', def: 'on', options: function () { return [{ v: 'on', label: '开' }, { v: 'off', label: '关' }]; } },
+  ],
+  // 动作执行（每帧）：在这里写你的逻辑（移动、绘制、改状态等）
+  run: function (inputs, inst, p, st) {
+    // inputs.a / inputs.selIn / inputs.dispIn —— 连线输入值（未连线为 null）
+    // p.sel / p.sw —— 参数值
+    // st.xxx —— 每实例独立状态
+    // 示例：每帧把实例向右移动一格（取消注释生效）
+    // inst.x += 1;
+    // 示例：每帧累计一个帧数（取消注释生效）
+    // st.frames = (st.frames || 0) + 1;
+  },
+  // 数据输出（第 5 参 fromSock 区分输出哪个端口）
+  value: function (inputs, inst, p, st, fromSock) {
+    if (fromSock === 'swOut') return p.sw === 'on' ? 1 : 0;          // 开关端口输出 1/0
+    if (inputs.dispIn !== null && inputs.dispIn !== undefined) return inputs.dispIn; // 显示框优先显示输入值
+    return (inputs.a === null || inputs.a === undefined) ? 0 : inputs.a;             // 主输出 = 数值A
+  },
+});
+
+// ---------- 【插件示例1】流程动作节点 ----------
+// 最简单的流程节点：加 flowIn/flowOut，每帧执行 run（适合做移动、计时、播放等持续动作）
+registerNodeType('pluginExample1', {
+  name: '插件示例1',            // 节点名称
+  category: '插件',
+  flowIn: true, flowOut: true, // 连入动作链后每帧执行 run
+  desc: '插件流程节点示例：每帧执行一次 run（示例：每帧让实例向下移动 1 格、并累计执行次数到 st.count）。复制本节点改 run 即可做你的持续动作',
+  // run：每帧调用，第一个参数 inputs（输入端口值）、第三个参数 p（参数值）、第四个参数 st（实例状态）
+  run: function (inputs, inst, p, st) {
+    // 示例逻辑（取消注释生效）：
+    // inst.y += 1;                      // 每帧向下移动 1 格
+    // st.count = (st.count || 0) + 1;   // 每帧累计执行次数（每实例独立）
+  },
+});
+
+// ---------- 【插件示例2】数据节点 ----------
+// 数据节点：value 返回一个数值/文本，别的节点连它的输出端口即可取值
+// 适合做"得分""血量""随机数""坐标"等数据源
+registerNodeType('pluginExample2', {
+  name: '插件示例2',
+  category: '插件',
+  desc: '插件数据节点示例：value 返回数值（示例：返回画布坐标 x+y）。想输出什么就让 value 返回什么（数值/文本/布尔）',
+  sockets: [
+    { key: 'out', dir: 'out', type: 'num', label: '数值' }, // 输出端口（右侧 ●）
+  ],
+  // value：别的节点从这个节点取数时调用，返回输出值
+  value: function (inputs, inst, p, st) {
+    // 示例：返回实例的 x 与 y 坐标之和（取消注释生效）
+    // return inst.x + inst.y;
+    return 0; // 默认返回 0
+  },
+});
+
+// ---------- 【插件示例3】检测节点 ----------
+// 检测/条件节点：value 返回 真(1) / 假(0)，可接「如果(条件)」等判断节点
+// 适合做"碰到边界?""血量<0?""按下某键?"等条件判断
+registerNodeType('pluginExample3', {
+  name: '插件示例3',
+  category: '插件',
+  desc: '插件检测节点示例：带输入端口「比较值」，value 返回 真(1)/假(0)（示例：比较值 > 50 返回 1，否则 0）。可接条件判断节点使用',
+  sockets: [
+    { key: 'v', dir: 'in', type: 'num', label: '比较值' }, // 输入端口（左侧 ●）
+    { key: 'out', dir: 'out', type: 'num', label: '结果' }, // 输出端口（右侧 ●）
+  ],
+  value: function (inputs, inst, p, st) {
+    const v = (inputs.v === null || inputs.v === undefined) ? 0 : inputs.v;
+    // 示例：比较值大于 50 返回 1（真），否则 0（假）（取消注释生效）
+    // return v > 50 ? 1 : 0;
+    return 0;
+  },
+});
+
+// ---------- 【插件示例4】参数+端口综合节点 ----------
+// 参数与端口组合：选择框、数字框、文本输入框，以及带输入/输出端口的参数
+// 适合做可配置的复杂节点（如"音效设置""颜色选择""文本消息"）
+registerNodeType('pluginExample4', {
+  name: '插件示例4',
+  category: '插件',
+  flowIn: true, flowOut: true,
+  displayVal: true,
+  desc: '插件参数综合示例：选择框「类型」、数字框「倍率」（带输入端口）、输入框「消息」（带输出端口）、显示框。演示参数/端口组合的写法',
+  sockets: [
+    // 「倍率」左侧输入端口（连线时优先用连线值）
+    { key: 'mulIn', dir: 'in', type: 'num', label: '倍率' },
+    // 「消息」右侧输出端口（输出输入框内容）
+    { key: 'msgOut', dir: 'out', type: 'num', label: '消息' },
+  ],
+  params: [
+    { key: 'type', label: '类型', type: 'select', def: 'a', options: function () { return [{ v: 'a', label: '类型A' }, { v: 'b', label: '类型B' }, { v: 'c', label: '类型C' }]; } },
+    { key: 'mul', label: '倍率', type: 'number', port: 'mulIn', min: 0, max: 100, step: 1, def: 1 },
+    { key: 'msg', label: '消息', type: 'text', def: '你好', out: 'msgOut' },
+  ],
+  run: function (inputs, inst, p, st) {
+    // p.type —— 选择框选中的值（'a'/'b'/'c'）
+    // p.mul / inputs.mulIn —— 倍率（未连线用参数 p.mul，连线用 inputs.mulIn）
+    // p.msg —— 输入框文本
+    // 示例：每帧把 x 加上 倍率（取消注释生效）
+    // const mul = (inputs.mulIn === null || inputs.mulIn === undefined) ? p.mul : inputs.mulIn;
+    // inst.x += mul;
+  },
+  value: function (inputs, inst, p, st, fromSock) {
+    if (fromSock === 'msgOut') return (p.msg === undefined || p.msg === null || p.msg === '') ? 0 : p.msg; // 消息端口输出文本
+    return (inputs.mulIn === null || inputs.mulIn === undefined) ? p.mul : inputs.mulIn;                   // 主输出 = 倍率
+  },
+});
+
+// ============================================================
+// 快速添加你的插件节点：
+//   复制 registerNodeType('你的id', { ... }); 到文件末尾（两个 // === 之间），
+//   改 name/category/desc/sockets/params/run/value 即可。
+//   导入后如要修改，节点按钮上右键 → 编辑 JS。
+// ============================================================
+`;
+// 打开自制插件编辑器：默认显示插件示例模板，可修改后保存生效
+function openNewPluginEditor() {
+  openNodeJsEditor(PLUGIN_TEMPLATE, '自制插件（可修改内置示例后保存生效）', { newNode: true, newPlugin: true });
+}
+const scratchBtnNewPlugin = document.getElementById('scratchBtnNewPlugin');
+if (scratchBtnNewPlugin) scratchBtnNewPlugin.addEventListener('click', openNewPluginEditor);
+
+// 【保存】按钮：手动持久化新增/删除状态（重启后保留）
+function doSaveCustom() {
+  const msg = saveAllCustomNodes();
+  flashNodeJs(msg);
+}
+function flashNodeJs(msg) {
+  const d = document.createElement('div');
+  d.textContent = '💾 ' + msg;
+  d.style.cssText = 'position:fixed;top:70px;left:50%;transform:translateX(-50%);background:#1e3a5f;border:1px solid #3b82f6;color:#dbe2ea;padding:8px 18px;border-radius:8px;z-index:200;font-size:13px';
+  document.body.appendChild(d);
+  setTimeout(function () { d.remove(); }, 2000);
+}
+nodeJsEl('btnSaveCustom').addEventListener('click', doSaveCustom);
+nodeJsEl('scratchBtnSaveCustom').addEventListener('click', doSaveCustom);
+// 加载已保存的自制节点与插件（浏览器本地持久化）
+loadCustomNodes();
+refreshNodeLibrary();
+loadAllPlugins();
+loadGroups(); // 恢复已保存的节点组（本地持久化）
+loadObjectVars(); // 恢复已保存的变量 / 数组（本地持久化）

@@ -6,6 +6,8 @@
 <title>无限像素画布</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  ::selection { background: #3b82f6; color: #fff; }
+  ::-moz-selection { background: #3b82f6; color: #fff; }
   html, body {
     width: 100%; height: 100%;
     overflow: hidden;
@@ -27,7 +29,8 @@
   #toolbar {
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
     z-index: 10;
-    display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: center;
+    display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; justify-content: center;
+    max-width: 98vw; overflow-x: auto;
     background: rgba(28, 30, 36, .93);
     color: #e8eaf0;
     padding: 8px 14px;
@@ -38,9 +41,10 @@
     backdrop-filter: blur(6px);
     user-select: none;
   }
-  #toolbar .logo { font-weight: 700; font-size: 14px; color: #fff; padding: 5px 8px; border-radius: 7px; }
+  #toolbar .logo { font-weight: 700; font-size: 14px; color: #fff; padding: 5px 8px; border-radius: 7px; text-decoration: none; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
   #toolbar .sep { width: 1px; height: 22px; background: rgba(255,255,255,.18); }
   .tool-btn, .btn {
+    white-space: nowrap;
     padding: 5px 10px; border-radius: 7px;
     cursor: pointer; color: #cfd3dc;
     border: 1px solid transparent;
@@ -84,21 +88,22 @@
   #colorInfo .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; border: 1px solid rgba(255,255,255,.4); }
 
   #hint {
-    position: fixed; left: 14px; bottom: 12px; z-index: 10;
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 10;
     color: rgba(40,44,52,.72);
     background: rgba(255,255,255,.78);
-    padding: 6px 12px; border-radius: 8px;
+    padding: 6px 14px; border-radius: 8px;
     font-size: 12px; line-height: 1.6;
     box-shadow: 0 2px 8px rgba(0,0,0,.10);
     backdrop-filter: blur(4px);
-    max-width: 430px;
+    white-space: nowrap;
+    max-width: 94vw; overflow: hidden; text-overflow: ellipsis;
   }
   #hint b { color: rgba(30,34,42,.95); }
   @media (max-width: 820px) { #hint { display: none; } }
 
   /* ---- 自定义笔刷画板 ---- */
   #modalMask {
-    position: fixed; inset: 0; z-index: 30;
+    position: fixed; inset: 0; z-index: 1000;
     background: rgba(10,12,16,.55);
     display: none;
     align-items: center; justify-content: center;
@@ -109,6 +114,7 @@
     border-radius: 14px; padding: 16px 18px;
     box-shadow: 0 10px 40px rgba(0,0,0,.45);
     max-width: 94vw; max-height: 92vh; overflow: auto;
+    min-width: 720px;
     display: flex; flex-direction: column; gap: 12px;
   }
   #modalHead { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
@@ -132,11 +138,60 @@
     padding: 6px 4px; border-radius: 10px;
   }
   #modalSideTools .tool-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; padding: 0; font-size: 17px; }
+  #brushLibrary { position: fixed; z-index: 45; top: 50%; left: 50%; transform: translate(-50%, -70%); width: min(440px, 86vw); box-sizing: border-box; border: 1px solid #3a4256; border-radius: 12px; background: #1a2130; padding: 10px 12px; max-height: 320px; overflow: auto; box-shadow: 0 12px 44px rgba(0,0,0,.6); }
+  #brushLibrary .bl-head { font-size: 12px; color: #c7cdd8; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+  #brushLibraryList { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+  #brushLibraryList .bl-item { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border: 1px solid #3a4256; border-radius: 6px; background: #262c3a; cursor: pointer; position: relative; }
+  #brushLibraryList .bl-item .bl-del { position: absolute; top: 2px; right: 5px; color: #8a93a1; font-size: 13px; line-height: 1; cursor: pointer; padding: 1px 3px; border-radius: 4px; }
+  #brushLibraryList .bl-item .bl-del:hover { color: #f87171; background: rgba(248,113,113,.12); }
+  #brushLibraryList .bl-item:hover { border-color: #3b82f6; background: #2b3550; }
+  #brushLibraryList .bl-item .bl-name { font-size: 11px; color: #e2e6ef; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #brushLibraryList .bl-item .bl-meta { font-size: 10px; color: #8a93a1; }
+  #brushLibraryList .bl-empty { font-size: 10px; color: #8a93a1; }
   #modalFoot { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
   /* ---- 设置面板 ---- */
+  #nodeJsModal {
+    position: fixed; inset: 0; z-index: 120;
+    background: rgba(10,12,16,.55);
+    display: none;
+    align-items: center; justify-content: center;
+  }
+  #nodeJsModal.open { display: flex; }
+  #nodeJsPanel {
+    background: #23252c; color: #e8eaf0;
+    border-radius: 14px; padding: 14px 16px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.45);
+    width: min(760px, 94vw);
+    max-height: 90vh; overflow: auto;
+  }
+  #nodeJsHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  #nodeJsTitle { font-size: 15px; font-weight: 700; color: #ff6680; }
+  #nodeJsClose { background: none; border: none; color: #9aa0ab; font-size: 20px; cursor: pointer; line-height: 1; }
+  #nodeJsClose:hover { color: #fff; }
+  #nodeJsEditorBox { position: relative; }
+  /* 锁定态：编辑器只读 */
+  #nodeJsEdit.node-js-locked { cursor: not-allowed; user-select: none; }
+  #nodeJsEdit {
+    width: 100%; height: 380px; margin: 0; display: block;
+    background: #0f1216; color: #e2e8f0;
+    border: 1px solid #2a3442; border-radius: 8px;
+    padding: 10px;
+    font-family: Consolas, "Courier New", "Microsoft YaHei", "PingFang SC", monospace;
+    font-size: 13px; line-height: 1.5;
+    white-space: pre-wrap; word-wrap: break-word;
+    overflow: auto; box-sizing: border-box;
+    outline: none; text-align: left;
+  }
+  #nodeJsEdit:focus { border-color: #ff6680; }
+  #nodeJsEdit:empty::before { content: attr(data-placeholder); color: #55606e; }
+  #nodeJsEdit .tok-cmt { color: #6a9955; font-style: italic; }
+  #nodeJsEdit .tok-str { color: #ce9178; }
+  #nodeJsEdit .tok-kw { color: #569cd6; }
+  #nodeJsEdit .tok-num { color: #b5cea8; }
+  #nodeJsErr { color: #f87171; font-size: 12px; margin-top: 6px; min-height: 16px; font-family: Consolas, monospace; }
   #settingsMask {
-    position: fixed; inset: 0; z-index: 25;
+    position: fixed; inset: 0; z-index: 1000;
     background: rgba(10,12,16,.5);
     display: none;
     align-items: center; justify-content: center;
@@ -190,7 +245,7 @@
   }
 
   /* ---- 统计面板 ---- */
-  #statsPanel {
+  #selectPanel {
     position: fixed; right: 64px; top: 90px; z-index: 13;
     width: 320px; max-height: 72vh; overflow: auto;
     background: rgba(28,30,36,.96); color: #e8eaf0;
@@ -198,16 +253,20 @@
     box-shadow: 0 6px 20px rgba(0,0,0,.35);
     display: none; font-size: 12px; line-height: 1.8;
   }
-  #statsPanel.open { display: block; }
-  #statsPanelHead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 4px; }
-  #btnCloseStats { background: none; border: none; color: #9aa0ab; font-size: 16px; cursor: pointer; line-height: 1; }
-  #btnCloseStats:hover { color: #fff; }
+  #selectPanel.open { display: block; }
+  #selectPanelHead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 4px; }
+  #btnCloseSelect { background: none; border: none; color: #9aa0ab; font-size: 16px; cursor: pointer; line-height: 1; }
+  #btnCloseSelect:hover { color: #fff; }
   .stat-row { display: flex; align-items: center; gap: 6px; }
   .stat-swatch { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(255,255,255,.3); flex-shrink: 0; }
-  #statsFoot { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; flex-wrap: wrap; }
+  #selectFoot { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; flex-wrap: wrap; }
+  .sel-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+  .sel-row label { color: #9aa0ab; }
+  .sel-row input { width: 64px; background: #12141a; border: 1px solid #2a3442; color: #e8eaf0; padding: 4px 6px; border-radius: 6px; font-size: 12px; }
+  .sel-note { color: #7cc7ff; margin: 4px 0 2px; }
 
   /* ---- 更多工具菜单 / 封闭图形子菜单 ---- */
-  #moreMenu, #shapeMenu, #selectMenu {
+  #moreMenu, #shapeMenu, #brushMenu {
     position: fixed; right: 60px; top: 50%; transform: translateY(-50%);
     z-index: 13;
     display: none; flex-direction: column; gap: 4px;
@@ -216,8 +275,8 @@
     box-shadow: 0 6px 20px rgba(0,0,0,.35);
     user-select: none;
   }
-  #moreMenu.open, #shapeMenu.open, #selectMenu.open { display: flex; }
-  #moreMenu .tool-btn, #shapeMenu .tool-btn, #selectMenu .tool-btn {
+  #moreMenu.open, #shapeMenu.open, #brushMenu.open { display: flex; }
+  #moreMenu .tool-btn, #shapeMenu .tool-btn {
     display: flex; align-items: center; gap: 6px;
     white-space: nowrap; padding: 7px 10px;
   }
@@ -233,6 +292,18 @@
     transition: background .15s, color .15s;
   }
   #layersToggle:hover, #layersToggle.active { background: #3b82f6; color: #fff; }
+  /* ---- 顶部 / 右侧工具栏独立隐藏开关（与左侧 ▤ 同一模式） ---- */
+  #topToggle, #sideToggle {
+    position: fixed; z-index: 12; width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(28,30,36,.92); color: #e8eaf0;
+    border: none; border-radius: 9px; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0,0,0,.28); font-size: 14px; user-select: none;
+    transition: background .15s, color .15s;
+  }
+  #topToggle:hover, #sideToggle:hover { background: #3b82f6; color: #fff; }
+  #topToggle { left: 12px; top: 14px; }
+  #sideToggle { right: 12px; bottom: 56px; }
   #layersPanel {
     position: fixed; left: 50px; top: 50%; transform: translateY(-50%);
     z-index: 12; width: 178px;
@@ -243,41 +314,96 @@
   }
   #layersPanel.open { display: block; }
   #layersHead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 6px; gap: 6px; }
-  .layers-hint { color: #8a8f9a; font-size: 10px; font-weight: 400; }
+  .layers-hint { color: #b9c1cd; font-size: 10px; font-weight: 400; }
   #layersList { max-height: 45vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+  /* ---- 调色板（图层面板内，图层列表下方，可隐藏） ---- */
+  #paletteBlock { margin-top: 8px; border-top: 1px solid rgba(255,255,255,.12); padding-top: 6px; }
+  #paletteHead {
+    display: flex; justify-content: space-between; align-items: center;
+    font-weight: 700; margin-bottom: 5px;
+  }
+  #paletteToggle { background: none; border: none; cursor: pointer; color: #cfd3dc; font-size: 13px; padding: 0; line-height: 1; }
+  #paletteToggle:hover { color: #fff; }
+  #paletteGrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+  #paletteGrid.hidden { display: none; }
+  .pal-swatch {
+    aspect-ratio: 1; border-radius: 6px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.18); box-shadow: inset 0 0 0 1px rgba(0,0,0,.18);
+    transition: transform .12s, box-shadow .12s;
+  }
+  .pal-swatch:hover { transform: scale(1.12); }
+  .pal-swatch.active { box-shadow: 0 0 0 2px #fff; }
+  /* 调色板工具行：导出 / 导入 / 调色库切换（小图标按钮，悬停显示说明） */
+  #paletteTools { display: flex; align-items: center; gap: 4px; margin-top: 7px; }
+  #paletteTools > button {
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16);
+    border-radius: 5px; color: #cfd3dc; font-size: 12px; padding: 2px 7px; cursor: pointer;
+    line-height: 1.5; font-family: inherit;
+  }
+  #paletteTools > button:hover { background: rgba(255,255,255,.2); color: #fff; }
+  #paletteLibBox { position: relative; margin-left: auto; }
+  #paletteLibMenu {
+    position: absolute; right: 0; bottom: calc(100% + 4px);
+    background: rgba(28,30,36,.98); border: 1px solid rgba(255,255,255,.2);
+    border-radius: 8px; padding: 4px; z-index: 15; min-width: 160px; max-height: 220px; overflow: auto;
+  }
+  #paletteLibMenu.hidden { display: none; }
+  .lib-item {
+    display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px;
+    cursor: pointer; font-size: 12px; color: #cfd3dc;
+  }
+  .lib-item:hover { background: rgba(255,255,255,.12); color: #fff; }
+  .lib-item.active { background: #3b82f6; color: #fff; }
+  .lib-item .lib-rename { margin-left: auto; cursor: pointer; font-size: 11px; opacity: .7; padding: 0 3px; }
+  .lib-item .lib-rename:hover { opacity: 1; }
+  .lib-item .lib-del { cursor: pointer; font-size: 11px; opacity: .7; padding: 0 3px; }
+  .lib-item .lib-del:hover { opacity: 1; color: #f87171; }
   .layer-item {
     display: flex; align-items: center; gap: 6px; padding: 5px 7px; border-radius: 7px;
     cursor: pointer; color: #cfd3dc; background: rgba(255,255,255,.06);
   }
+  .layer-item.drag-src { opacity: .45; border: 1px dashed #3b82f6; }
+  .layer-item.drag-over { border: 1px solid #3b82f6; background: rgba(59,130,246,.25); }
   .layer-item:hover { background: rgba(255,255,255,.12); }
   .layer-item.active { background: #3b82f6; color: #fff; }
-  .layer-item .eye { cursor: pointer; font-size: 13px; flex-shrink: 0; }
+  .layer-item.multi-sel { background: rgba(59,130,246,.35); color: #fff; }
+  .layer-item .eye { cursor: pointer; font-size: 13px; flex-shrink: 0; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: rgba(255,255,255,.08); transition: background .12s; }
+  .layer-item .eye:hover { background: rgba(255,255,255,.18); }
+  .layer-item .eye.has-inst { background: rgba(245,158,11,.45); } /* 该图层有实例：隐藏按钮橙色 */
+  .layer-item .eye.has-inst:hover { background: rgba(245,158,11,.6); }
+  .layer-item .eye.has-object { background: rgba(34,197,94,.45); } /* 该图层已作为对象：隐藏按钮绿色 */
+  .layer-item .eye.has-object:hover { background: rgba(34,197,94,.6); }
+  .layer-item .eye.has-inst.has-object { background: rgba(245,158,11,.6); outline: 1px solid rgba(34,197,94,.8); } /* 实例+对象：橙底绿框 */
   .layer-item .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #layersFoot { display: flex; gap: 5px; margin-top: 8px; }
   #layersFoot .btn { padding: 3px 6px; font-size: 11px; }
+  /* 图层项右键菜单 */
+  #layerCtxMenu {
+    position: fixed; z-index: 160; display: none; min-width: 160px; background: #1a2130;
+    border: 1px solid #3a4256; border-radius: 10px; padding: 5px; box-shadow: 0 10px 34px rgba(0,0,0,.6);
+    font-size: 12px; color: #e8eaf0;
+  }
+  #layerCtxMenu .lctx-item {
+    padding: 7px 10px; border-radius: 7px; cursor: pointer; display: flex; gap: 8px; align-items: center;
+  }
+  #layerCtxMenu .lctx-item:hover { background: #24304a; }
+  #layerCtxMenu .lctx-sep { height: 1px; background: #3a4256; margin: 4px 6px; }
   #nodeNameInput {
     width: 100%; background: rgba(255,255,255,.10); color: #e8eaf0;
     border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
     padding: 4px 7px; font-size: 12px; outline: none; box-sizing: border-box;
   }
+  #nodeNameInput::placeholder { color: #a8b2c0; }
   #nodeNameInput:focus { border-color: #3b82f6; }
   #nodeNameInput:disabled { opacity: .4; }
-  /* 图层项：添加节点按钮 / 图层名编辑输入框 */
-  .layer-item .objbtn {
-    cursor: pointer; font-size: 12px; padding: 0 3px; opacity: .45; border-radius: 4px; flex-shrink: 0;
-  }
-  .layer-item .objbtn:hover { opacity: 1; background: rgba(30,200,120,.25); }
-  .layer-item .objbtn.on { opacity: 1; background: rgba(30,200,120,.35); }
-  .layer-item .instbtn.on { opacity: 1; background: rgba(245,158,11,.38); }
-  .layer-item .renamebtn { cursor: pointer; font-size: 11px; padding: 0 3px; opacity: .5; border-radius: 4px; flex-shrink: 0; }
-  .layer-item .renamebtn:hover { opacity: 1; background: rgba(255,255,255,.18); }
+  /* 图层名编辑输入框 */
   .layer-name-input {
     flex: 1; min-width: 40px; background: rgba(255,255,255,.14); color: #e8eaf0;
     border: 1px solid #3b82f6; border-radius: 5px; padding: 1px 5px; font-size: 12px; outline: none;
   }
 
   /* ---- 噪声生成 / 数学方程 面板 ---- */
-  #noisePanel, #mathPanel {
+  #noisePanel, #mathPanel, #texturePanel, #qrcodePanel {
     position: fixed; right: 64px; top: 90px; z-index: 13;
     width: 320px;
     background: rgba(28,30,36,.96); color: #e8eaf0;
@@ -285,8 +411,8 @@
     box-shadow: 0 6px 20px rgba(0,0,0,.35);
     display: none; font-size: 12px; line-height: 1.8;
   }
-  #noisePanel.open, #mathPanel.open { display: block; }
-  #noiseHead, #mathHead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 6px; }
+  #noisePanel.open, #mathPanel.open, #texturePanel.open, #qrcodePanel.open { display: block; }
+  #noiseHead, #mathHead, #textureHead, #qrcodeHead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 6px; }
   #btnCloseNoise, #btnCloseMath { background: none; border: none; color: #9aa0ab; font-size: 16px; cursor: pointer; line-height: 1; }
   #btnCloseNoise:hover, #btnCloseMath:hover { color: #fff; }
   .n-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
@@ -299,13 +425,14 @@
   #noisePanel input[type=number]:focus, #mathPanel input:focus { border-color: #3b82f6; }
   #noisePanel .field, #mathPanel .field { font-size: 12px; color: #cfd3dc; }
   #noisePanel .btn, #mathPanel .btn { padding: 4px 10px; }
-  #noisePanel .n-note, #mathPanel .n-note { color: #9aa0ab; font-size: 11px; margin-top: 6px; }
+  .n-note { color: #b6bfcd; }
+  #noisePanel .n-note, #mathPanel .n-note { color: #b6bfcd; font-size: 11px; margin-top: 6px; }
 
   /* ---- 节点编辑器面板 ---- */
   #nodePanel {
     position: fixed; right: 64px; top: 90px; z-index: 13;
     width: 720px; max-width: 96vw;
-    background: rgba(28,30,36,.97); color: #e8eaf0;
+    background: rgba(46,52,66,.98); color: #eef1f6;
     border-radius: 12px; padding: 10px 12px;
     box-shadow: 0 6px 20px rgba(0,0,0,.35);
     display: none; font-size: 12px; line-height: 1.8;
@@ -316,11 +443,11 @@
   #btnCloseNode:hover { color: #fff; }
   #nodeBody { display: flex; gap: 10px; min-height: 320px; }
   #nodeLeft { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
-  .node-col-title { font-size: 11px; color: #9aa0ab; font-weight: 700; }
+  .node-col-title { font-size: 11px; color: #b6bdc9; font-weight: 700; }
   #nodeObjList { flex: 1; overflow: auto; max-height: 220px; display: flex; flex-direction: column; gap: 4px; }
   .node-obj {
     display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 7px;
-    cursor: pointer; color: #cfd3dc; background: rgba(255,255,255,.06); white-space: nowrap;
+    cursor: pointer; color: #dde2ea; background: rgba(255,255,255,.08); white-space: nowrap;
   }
   .node-obj:hover { background: rgba(255,255,255,.12); }
   .node-obj.active { background: #3b82f6; color: #fff; }
@@ -332,7 +459,7 @@
   #nodeInstList { flex: 1; overflow: auto; max-height: 130px; display: flex; flex-direction: column; gap: 3px; }
   .node-inst {
     display: flex; align-items: center; gap: 6px; padding: 3px 7px; border-radius: 6px;
-    background: rgba(255,255,255,.06); cursor: pointer; font-size: 11px; white-space: nowrap;
+    background: rgba(255,255,255,.08); cursor: pointer; font-size: 11px; white-space: nowrap;
   }
   .node-inst:hover { background: rgba(255,255,255,.12); }
   .node-inst.active { background: #3b82f6; color: #fff; }
@@ -366,7 +493,26 @@
   }
   .bk-children { margin: 4px 0 4px 20px; padding-left: 10px; border-left: 3px solid rgba(0,0,0,.18); }
   .bk-empty { color: #8a8f9a; font-size: 11px; padding: 2px 4px; font-style: italic; }
-  #blockToolRow, #varRow, #nodeRunRow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  #blockToolRow, #varRow, #nodeRunRow, #soundRow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  #scratchSoundRow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .sound-list { display: flex; flex-direction: column; gap: 3px; width: 100%; }
+  .sound-box {
+    flex: 1 1 100%;
+    display: flex; flex-direction: column; gap: 3px;
+    background: #17181d; border: 1px solid #2e313b; border-radius: 8px; padding: 6px 8px;
+    margin: 2px 0;
+  }
+  .sound-box-title { font-size: 11px; color: #8a8f9c; }
+  .sound-item {
+    display: flex; align-items: center; gap: 6px; font-size: 12px;
+    width: 100%; max-width: 148px; box-sizing: border-box; /* 不超过盒子宽度；盒子足够宽时与节点宽度一致 */
+    background: rgba(255,255,255,.08); border-radius: 6px; padding: 2px 8px;
+  }
+  .sound-item span:first-child {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sound-item .del { margin-left: auto; cursor: pointer; color: #f87171; font-weight: 700; padding: 0 4px; flex-shrink: 0; }
+  .sound-item .del:hover { color: #fff; }
   #blockCatSelect, #blockTypeSelect {
     background: rgba(255,255,255,.10); color: #e8eaf0;
     border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 3px 6px; font-size: 12px;
@@ -388,17 +534,31 @@
     background: rgba(255,255,255,.06); font-weight: 700; flex-shrink: 0;
   }
   #scratchBody { flex: 1; display: flex; min-height: 0; }
+  /* 画布专注模式：隐藏节点分类 / 节点库 / 舞台，画布铺满 */
+  #scratchBody.canvas-focus #scratchCats,
+  #scratchBody.canvas-focus #scratchLib,
+  #scratchBody.canvas-focus #scratchRight { display: none; }
+  #scratchCats { position: relative; }
+  #catsDivider { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 80; }
+  #catsDivider:hover { background: rgba(59,130,246,.35); }
   #scratchCats {
     width: 112px; flex-shrink: 0; padding: 8px 6px; display: flex; flex-direction: column; gap: 4px;
     background: rgba(255,255,255,.04); overflow: auto;
   }
-  #scratchCats .cat { padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 700; color: #fff; }
+  #scratchCats .cat { padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 700; color: #fff; text-align: center; }
   #scratchCats .cat.dark { color: #333; }
   #scratchCats .cat.active { outline: 2px solid #fff; outline-offset: -2px; }
+  #scratchPluginBox .scratch-col-title { display: flex; align-items: center; gap: 4px; }
+  #scratchPluginBox .plugin-help-btn { width: 14px; height: 14px; line-height: 12px; font-size: 10px; padding: 0; border-radius: 50%; border: 1px solid #5a6472; background: none; color: #9aa0ab; cursor: pointer; text-align: center; }
+  #scratchPluginBox .plugin-help-btn:hover { color: #fff; border-color: #7aa2ff; }
+  #scratchPluginBox #scratchPluginHelp { margin: 2px 0 6px; line-height: 1.6; }
   #scratchMain { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 8px; }
   /* 节点库 + 打包/导入/导出 共用左侧窄列：节点库在上、工具在下方 */
+  #scratchLib { position: relative; }
+  #libDivider { position: absolute; right: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 80; }
+  #libDivider:hover { background: rgba(59,130,246,.35); }
   #scratchLib {
-    width: 148px; flex-shrink: 0; display: flex; flex-direction: column;
+    width: 112px; flex-shrink: 0; display: flex; flex-direction: column;
     padding: 8px 6px; background: rgba(255,255,255,.04); border-left: 1px solid rgba(255,255,255,.08);
     overflow-y: auto; position: relative;
   }
@@ -406,20 +566,44 @@
   #scratchLib::after { content: ''; position: absolute; top: 0; right: -5px; width: 10px; height: 100%; cursor: col-resize; z-index: 5; }
   #scratchLib::after:hover { background: rgba(59,130,246,.25); }
   #scratchLib .scratch-col-title { margin: 0 0 4px; }
-  #scratchPalette { display: flex; flex-wrap: wrap; gap: 5px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,.12); min-height: 34px; }
-  #scratchPalette .pb { border: none; border-radius: 6px; color: #fff; font-size: 11px; padding: 4px 9px; cursor: pointer; }
+  /* 节点列表：单竖列，按需压缩避免过多占位 */
+  #scratchPalette {
+    display: flex; flex-direction: column; gap: 5px; padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,.12); min-height: 34px;
+  }
+  #scratchPalette .pb { border: none; border-radius: 6px; color: #fff; font-size: 11px; padding: 4px 9px; cursor: pointer; width: 100%; text-align: left; }
+  .plugin-item { display: flex; align-items: center; justify-content: flex-start; gap: 6px; flex-direction: row; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(34, 211, 238, .45); background: rgba(34, 211, 238, .12); cursor: pointer; font-weight: 700; color: #e6f7ff; font-size: 12px; position: relative; width: 100%; box-sizing: border-box; overflow: hidden; white-space: nowrap; }
+  .plugin-item:hover { background: rgba(34, 211, 238, .22); }
+  .plugin-item .pi-name { font-size: 12px; color: #e6f7ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80%; }
+  .plugin-item .pi-meta { font-size: 10px; color: #8a93a1; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+  /* 插件库中的插件条目：类型盒子样式（像「输入/节点组」分类按钮一样），点击显示该类型节点库 */
+  #scratchPluginNewBox, #scratchPluginSaved { display: flex; flex-direction: column; gap: 4px; }
   #scratchPalette .pb.dark { color: #333; }
   #scratchPalette .pb:hover { filter: brightness(1.15); }
-  /* 打包/导出/导入：节点库下方 */
+  /* 节点组按钮：悬停显示右上角删除按钮 */
+  .group-pal-item { display: flex; align-items: center; }
+  .group-pal-item .pb { flex: 1; min-width: 0; }
+  .group-pal-del {
+    display: none; position: absolute; top: -5px; right: -5px; z-index: 2;
+    width: 15px; height: 15px; line-height: 14px; text-align: center; font-size: 10px;
+    background: #ef4444; color: #fff; border-radius: 50%; cursor: pointer; border: 1px solid #fff;
+  }
+  .group-pal-item:hover .group-pal-del { display: block; }
+  .group-pal-del:hover { background: #dc2626; }
+  /* 打包/导出/导入：节点列表下方固定，不滚动、不遮挡节点 */
   #scratchGroupTools {
-    display: flex; flex-direction: column; gap: 4px; margin-top: 8px;
-    padding: 6px 4px; background: rgba(167,139,250,.08); border: 1px solid rgba(167,139,250,.25); border-radius: 6px;
+    display: flex; flex-direction: column; gap: 4px;
+    margin-top: 8px; padding: 6px 4px; flex-shrink: 0;
+    background: #282c34; border: 1px solid rgba(167,139,250,.35); border-radius: 6px;
   }
   #scratchGroupTools .btn { padding: 5px 8px; font-size: 12px; width: 100%; }
   #scratchBlocks {
     flex: 1; position: relative; overflow: auto; background: #e9e7e1; border-radius: 8px; margin-top: 8px; min-height: 200px;
   }
   .scratch-col-title { font-size: 11px; color: #9aa0ab; font-weight: 700; margin-bottom: 4px; }
+  #scratchRight { position: relative; }
+  #stageDivider { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 80; }
+  #stageDivider:hover { background: rgba(59,130,246,.35); }
   #scratchRight { flex: 0 1 330px; min-width: 240px; max-width: 46vw; padding: 8px; display: flex; flex-direction: column; gap: 8px; background: rgba(255,255,255,.03); overflow: hidden; }
   #stageBox { background: #fff; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 120px; }
   #stageCanvas { display: block; }
@@ -483,7 +667,17 @@
   }
   .node-gnode .ng-del { cursor: pointer; color: #f87171; padding: 0 3px; font-size: 13px; }
   .node-gnode .ng-del:hover { color: #fff; }
-  .node-gnode .ng-row { display: flex; align-items: center; gap: 5px; padding: 2px 9px; }
+  .node-gnode .ng-row { display: flex; align-items: center; gap: 5px; padding: 2px 9px; position: relative; }
+  .node-gnode .node-socket.inline { position: absolute; right: -4px; top: 50%; transform: translateY(-50%); padding: 0; }
+  .node-gnode .node-socket.inline .dot { width: 10px; height: 10px; }
+  .node-gnode .node-socket.inline .sl { display: none; }
+  .node-gnode .node-val { display: flex; align-items: center; gap: 6px; padding: 3px 9px; border-top: 1px solid rgba(255,255,255,.10); }
+  .node-gnode .node-val-print .nv-box {
+    min-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: #a7f3d0; background: rgba(16,185,129,.10); border-color: rgba(16,185,129,.4);
+  }
+  .node-gnode .node-val .nv-label { font-size: 11px; color: #9aa0ab; white-space: nowrap; }
+  .node-gnode .node-val .nv-box { flex: 1; font-size: 12px; color: #7aa2ff; font-family: Consolas, monospace; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.22); border-radius: 5px; padding: 1px 6px; text-align: center; min-width: 44px; }
   .node-gnode .ng-row label { color: #9aa0ab; font-size: 11px; white-space: nowrap; }
   .node-gnode .ng-row input[type=number] {
     width: 52px; background: rgba(255,255,255,.10); color: #e8eaf0;
@@ -518,6 +712,10 @@
   }
   .node-flow.out::after { content: '▶'; }
   .node-flow:hover { filter: brightness(1.25); }
+  /* 条件判断的双出口（✅是 / ❌否）：显示文字而非箭头 */
+  .node-flow.out[data-fsock] { width: 30px; font-size: 8px; }
+  .node-flow.out[data-fsock]::after { content: ''; }
+  .node-flow.out[data-fsock="else"] { background: #ef4444; }
   #nodeCanvas svg.conn-layer path.conn.flow, #scratchCanvas svg.conn-layer path.conn.flow {
     stroke: #22c55e; stroke-width: 3; fill: none; pointer-events: stroke; cursor: pointer;
   }
@@ -529,6 +727,9 @@
   #nodeCanvas svg.conn-layer path.conn:hover, #scratchCanvas svg.conn-layer path.conn:hover { stroke: #ffd166; }
   #nodeCanvas svg.conn-layer path.temp, #scratchCanvas svg.conn-layer path.temp {
     stroke: #7aa2ff; stroke-width: 1.5; stroke-dasharray: 4 3;
+  }
+  #nodeCanvas svg.conn-layer path.temp.flow-temp, #scratchCanvas svg.conn-layer path.temp.flow-temp {
+    stroke: #22c55e; stroke-width: 2.5; stroke-dasharray: 5 4;
   }
   #nodeAddRow, #nodeRunRow, #varRow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   #varRow input[type=text] {
@@ -558,63 +759,75 @@
     box-shadow: 0 4px 14px rgba(0,0,0,.3);
   }
 
-#scratchVarRow{display:none;flex-direction:column;gap:4px;padding:6px 2px;border-top:1px solid #333a48;margin-top:6px}
-#scratchVarRow input{width:100%;box-sizing:border-box;font-size:11px;padding:4px 6px;border:1px solid #3a4256;border-radius:4px;background:#262c3a;color:#cdd3e0}
-#scratchVarRow .btn{width:100%;font-size:11px;padding:4px 6px;white-space:nowrap}
+#scratchVarRow{flex-direction:column;gap:4px;padding:6px 2px;border-top:1px solid #333a48;margin-top:6px}
+#scratchVarRow input, #scratchArrRow input{width:100%;box-sizing:border-box;font-size:11px;padding:4px 6px;border:1px solid #3a4256;border-radius:4px;background:#262c3a;color:#cdd3e0}
+#scratchVarRow .btn, #scratchArrRow .btn{width:100%;font-size:11px;padding:4px 6px;white-space:nowrap}
 #scratchVarList{display:flex;flex-direction:column;gap:2px;max-height:160px;overflow:auto}
 .scratch-var-item{font-size:11px;color:#cdd3e0;background:#262c3a;border:1px solid #3a4256;border-radius:4px;padding:3px 6px}
+.scratch-var-item .sv-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scratch-var-item .sv-del{background:none;border:none;color:#9aa0ab;cursor:pointer;font-size:12px;padding:0 2px;line-height:1}
+.scratch-var-item .sv-del:hover{color:#f87171}
+.scratch-var-item.sv-note{font-size:10px;color:#7a8494}
+.sv-note{font-size:10px;color:#7a8494}
+.scratch-arr-table{margin-top:6px;padding:6px;border:1px solid #3a4256;border-radius:6px;background:#1c2430}
+.arr-table-row{display:flex;align-items:center;gap:6px;margin:3px 0;font-size:11px}
+.arr-table-row label{color:#9aa0ab}
+.arr-table-row input{width:64px;font-size:11px;padding:2px 4px;background:#262c3a;border:1px solid #3a4256;border-radius:4px;color:#cdd3e0}
+.arr-idx{display:inline-block;width:34px;color:#7aa2ff;text-align:right}
+.arr-table-foot{display:flex;gap:6px;justify-content:flex-end;margin-top:6px}
+.arr-table-foot .btn{font-size:11px;padding:3px 8px}
+.arr-rows{max-height:140px;overflow:auto}
 #varRow{display:flex;gap:6px;align-items:center;padding:6px 0}
 #varRow input{flex:1;min-width:0;font-size:12px;padding:4px 6px;border:1px solid #3a4256;border-radius:4px;background:#262c3a;color:#cdd3e0}
+.export-fmt-item:hover{background:#24304a;color:#fff}
+.export-fmt-item.active{background:#3b82f6;color:#fff}
+.img-fmt-item:hover{background:#24304a;color:#fff}
+.img-fmt-item.active{background:#3b82f6;color:#fff}
 </style>
 </head>
 <body>
 
 <div id="toolbar">
-  <span class="logo">⬚ 像素画布</span>
+  <a class="logo" href="../../index.html" title="点击回到网页导航">⬚ 像素画布</a>
   <div class="sep"></div>
-  <button class="tool-btn" id="btnSettings" title="打开设置：工具、笔刷/橡皮、颜色、颜色代码、隐藏界面等">⚙ 设置</button>
-  <button class="tool-btn" id="btnHideUI" title="手动隐藏/显示工具栏与提示（快捷键 H）">🙈 隐藏</button>
+  <button class="tool-btn" id="btnSettings" title="打开设置：工具、笔刷/橡皮、颜色、颜色代码、隐藏界面等">⚙</button>
+  <button class="tool-btn" id="btnHideUI" title="手动隐藏/显示工具栏与提示（快捷键 H）">🙈</button>
   <div class="sep"></div>
-  <span class="tool-btn active" id="btnBrush" title="画笔工具（快捷键 B）">🖌 画笔</span>
-  <span class="tool-btn" id="btnEraser" title="橡皮工具（快捷键 E）">🧹 橡皮</span>
   <span class="tool-btn" id="btnUndo" title="撤销（Ctrl+Z）">↶</span>
   <span class="tool-btn" id="btnRedo" title="重做（Ctrl+Shift+Z / Ctrl+Y）">↷</span>
   <div class="sep"></div>
-  <label class="field" id="sizeField">大小
-    <input type="range" id="sizeSlider" min="1" max="32" step="1" value="4">
-    <span id="sizeVal">4</span>px
-  </label>
-  <div class="sep"></div>
-  <input type="color" id="colorPicker" value="#3b82f6" title="当前画笔颜色">
-  <div class="sep"></div>
   <span id="zoomVal" title="当前缩放">800%</span>
-  <button class="btn" id="btnReset" title="缩放回到 100%，原点回到屏幕中心">重置视图</button>
+  <button class="btn" id="btnReset" title="缩放回到 100%，原点回到屏幕中心">🔄</button>
   <div class="sep"></div>
   <button class="btn" id="btnImportImage" title="把图片按像素导入到画布">🖼 导入图片</button>
   <button class="btn primary" id="btnExportPng" title="导出透明背景 PNG">⬇ 导出图片</button>
   <button class="btn" id="btnExportJson" title="保存工程（JSON）">导出工程</button>
   <button class="btn" id="btnImportJson" title="导入工程（JSON）">导入工程</button>
-  <button class="btn danger" id="btnClear">清空</button>
+  <button class="btn danger" id="btnClear" title="清空画布">🗑</button>
 </div>
 
 <button id="btnRestoreUI" title="恢复工具栏与提示">👁 显示</button>
 
+<!-- 顶部 / 右侧工具栏独立隐藏开关（与左侧 ▤ 同一模式） -->
+<button id="topToggle" title="隐藏顶部工具栏">⤒</button>
+<button id="sideToggle" title="隐藏右侧工具栏">⤍</button>
+
 <!-- 右侧工具栏：封闭图形 / 填充 / 直线 / 统计 / 更多 -->
 <div id="sideToolbar">
   <div class="side-title">工具</div>
-  <span class="tool-btn" id="rToolShape" title="封闭图形：矩形 / 圆形 / 三角形（点击展开选择）">▭</span>
-  <span class="tool-btn" id="rToolFill" title="封闭填充：点击填充连通区域">🪣</span>
-  <span class="tool-btn" id="rToolLine" title="直线工具：拖动绘制直线">╱</span>
+  <span class="tool-btn" id="rToolBrush" title="画笔（左键使用，右键选择）">🖌</span>
+  <span class="tool-btn" id="rToolShape" title="封闭图形（左键使用矩形，右键选择）：矩形 / 圆形 / 三角形 / 填充">▭</span>
   <span class="tool-btn" id="rToolMove" title="移动工具：拖动画布上的实例到新位置">✋</span>
-  <span class="tool-btn" id="rToolSelect" title="框选：图像统计 / 框选移动（点击展开选择）">▢</span>
-  <div class="side-title">更多</div>
-  <span class="tool-btn" id="rToolMore" title="更多工具">⋯</span>
+  <span class="tool-btn" id="rToolSelect" title="框选：拖动框选一片像素区域，控制栏可缩放 / 统计 / RotSprite 旋转；框内左键拖动移动">▢</span>
+  <span class="tool-btn" id="btnOpenNodeEditor" title="打开节点编辑器：对象列表、重命名、实例化、编辑节点图（框选添加对象）">🧩</span>
+  <span class="tool-btn" id="rToolMore" title="工具菜单">⋯</span>
 </div>
 
-<!-- 框选子菜单（图像统计 / 框选移动） -->
-<div id="selectMenu">
-  <span class="tool-btn" data-sel="stats" title="图像统计：拖动框选 / Shift+拖动 统计直线">📊 图像统计</span>
-  <span class="tool-btn" data-sel="moveSel" title="框选移动：拖动框选一片像素，之后用手掌工具(✋)拖动整片像素移动">📦 框选移动</span>
+<!-- 画笔/橡皮子菜单 -->
+<div id="brushMenu">
+  <span class="tool-btn" data-brush="brush" title="画笔工具（快捷键 B）">🖌 画笔</span>
+  <span class="tool-btn" data-brush="eraser" title="橡皮工具（快捷键 E）">🧹 橡皮</span>
+  <span class="tool-btn" data-brush="line" title="直线工具：拖动绘制直线">╱ 直线</span>
 </div>
 
 <!-- 封闭图形子菜单（矩形 / 圆形 / 三角形） -->
@@ -622,6 +835,7 @@
   <span class="tool-btn" data-shape="rect" title="矩形工具：拖动绘制矩形">▭ 矩形</span>
   <span class="tool-btn" data-shape="circle" title="圆形工具：拖动绘制圆/椭圆">◯ 圆形</span>
   <span class="tool-btn" data-shape="triangle" title="三角形工具：拖动绘制三角形">△ 三角形</span>
+  <span class="tool-btn" data-shape="fill" title="封闭填充：点击填充连通区域">🪣 填充</span>
 </div>
 
 <!-- 更多工具展开菜单 -->
@@ -629,7 +843,28 @@
   <span class="tool-btn" id="btnOpenPicker" title="拾色器：点击格子拾取颜色（矢量模式可拾取矢量对象颜色）">🎯 拾色器</span>
   <span class="tool-btn" id="btnOpenNoise" title="生成 Perlin / Simplex / Value / Worley / Ridge 噪声图">🌊 噪声生成器</span>
   <span class="tool-btn" id="btnOpenMath" title="按数学方程绘制图像，线条粗细随画笔大小">∑ 数学方程</span>
-  <span class="tool-btn" id="btnOpenNodeEditor" title="打开节点编辑器：对象列表、重命名、实例化、编辑节点图（同时启用「框选添加对象」：框选一片像素区域剪切为对象）">🧩 节点编辑器</span>
+  <span class="tool-btn" id="btnOpenQrcode" title="二维码/条码生成器：根据文本在画布生成二维码（QR）或条码（Code 39），可设置颜色">🔳 二维码生成器</span>
+  <span class="tool-btn" id="btnOpenTexture" title="纹理生成器：砖墙 / 棋盘格 / 环境 / Gabor / IES / 迷幻 / 噪波 / 天空 / 沃罗诺伊 / 波浪 / 白噪波，可调长宽、偏移、缩放、种子、倍频、颜色">🧱 纹理生成器</span>
+  <span class="tool-btn" id="btnOpenPixelator" title="打开图片像素化网站（把图片像素化并导出 PNG）">🖼 图片像素化</span>
+  <span class="tool-btn" id="btnOpenVectorEditor" title="打开无限矢量画图网站（无限画布矢量绘制：矩形 / 三角 / 圆 / 直线，顶点吸附 / 切分 / 测量，v4 矢量工程互通）">✒ 无限矢量画图</span>
+</div>
+
+<!-- 导出工程格式菜单（右键「导出工程」按钮弹出） -->
+<div id="exportFmtMenu" style="display:none; position:fixed; z-index:150; min-width:220px; background:#1a2130; border:1px solid #3a4256; border-radius:10px; padding:6px; box-shadow:0 12px 44px rgba(0,0,0,.6); font-size:13px; color:#e8eaf0;">
+  <div style="font-size:11px; color:#8b93a1; padding:4px 8px 6px;">选择导出格式：</div>
+  <div class="export-fmt-item" data-fmt="v5" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">v5 全图层<span style="display:block; font-size:11px; color:#7a8494;">每图层独立像素，导入逐层恢复（推荐）</span></div>
+  <div class="export-fmt-item" data-fmt="v3" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">v3 紧凑格式<span style="display:block; font-size:11px; color:#7a8494;">调色板+RLE，可压缩</span></div>
+  <div class="export-fmt-item" data-fmt="v2" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">v2 旧版兼容<span style="display:block; font-size:11px; color:#7a8494;">pixels 明文数组（兼容旧版）</span></div>
+</div>
+
+<!-- 导出图片格式菜单（右键「导出图片」按钮弹出） -->
+<div id="imgFmtMenu" style="display:none; position:fixed; z-index:150; min-width:200px; background:#1a2130; border:1px solid #3a4256; border-radius:10px; padding:6px; box-shadow:0 12px 44px rgba(0,0,0,.6); font-size:13px; color:#e8eaf0;">
+  <div style="font-size:11px; color:#8b93a1; padding:4px 8px 6px;">选择导出图片格式：</div>
+  <div class="img-fmt-item" data-fmt="png" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">PNG（透明）<span style="display:block; font-size:11px; color:#7a8494;">静态，透明背景</span></div>
+  <div class="img-fmt-item" data-fmt="jpg" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">JPG / JPEG<span style="display:block; font-size:11px; color:#7a8494;">静态，有损压缩</span></div>
+  <div class="img-fmt-item" data-fmt="webp" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">WebP<span style="display:block; font-size:11px; color:#7a8494;">静态，可透明</span></div>
+  <div class="img-fmt-item" data-fmt="gif" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">GIF（动图）<span style="display:block; font-size:11px; color:#7a8494;">每图层一帧（从下到上）</span></div>
+  <div class="img-fmt-item" data-fmt="apng" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">APNG（动图）<span style="display:block; font-size:11px; color:#7a8494;">每图层一帧（从下到上）</span></div>
 </div>
 
 <!-- 图层面板（屏幕左侧）：添加 / 复制 / 删除 / 隐藏图层 -->
@@ -642,6 +877,27 @@
     <button class="btn" id="btnLayerDup" title="复制当前图层">⧉ 复制</button>
     <button class="btn danger" id="btnLayerDel" title="删除当前图层">🗑 删除</button>
   </div>
+  <!-- 调色板：20 个常用色（单击取色、双击改色），默认隐藏（🙈/👁 切换）；工具行：新建 / 导出 / 导入 / 调色库切换 -->
+  <div id="paletteBlock">
+    <div id="paletteHead"><span>🎨 调色板</span><button id="paletteToggle" title="显示/隐藏调色板">👁</button></div>
+    <div id="paletteGrid" class="hidden"></div>
+    <div id="paletteTools">
+      <button id="btnPaletteNew" title="新建调色库">＋</button>
+      <button id="btnPaletteExport" title="导出当前调色板（JSON）">⬇</button>
+      <button id="btnPaletteImport" title="导入调色板（JSON，加入调色库）">⬆</button>
+      <div id="paletteLibBox">
+        <button id="btnPaletteLib" title="调色库：默认调色板">🎨</button>
+        <div id="paletteLibMenu" class="hidden"></div>
+      </div>
+    </div>
+    <input type="file" id="paletteFileInput" accept=".json,application/json" style="display:none">
+  </div>
+</div>
+
+<!-- 图层项右键菜单 -->
+<div id="layerCtxMenu">
+  <div class="lctx-item" data-act="obj" title="把此图层的像素做成对象（节点编辑器可加行为、实例化）">📦 把此图层作为对象</div>
+  <div class="lctx-item" data-act="rename" title="重命名此图层（多选时批量命名为 1、2、3…从下到上）">✏️ 重命名</div>
 </div>
 
 <!-- 噪声生成面板 -->
@@ -700,6 +956,85 @@
   <div class="n-note">生成位置：屏幕中心 · 支持撤销（Ctrl+Z）</div>
 </div>
 
+
+<!-- 纹理生成器面板 -->
+<div id="texturePanel">
+  <div id="textureHead"><span>🧱 纹理生成器</span><button id="btnCloseTexture" title="关闭">×</button></div>
+  <div class="n-row"><span class="n-label">纹理类型</span><select id="texType">
+    <option value="brick">🧱 砖墙纹理</option><option value="checker">🏁 棋盘格纹理</option>
+    <option value="environ">🌍 环境纹理</option><option value="gabor">🔍 Gabor 纹理</option>
+    <option value="ies">💡 IES 纹理</option><option value="magic">✨ 迷幻纹理</option>
+    <option value="noise">🌊 噪波纹理</option><option value="sky">☁ 天空纹理</option>
+    <option value="voronoi">🟣 沃罗诺伊纹理</option><option value="wave">〰 波浪纹理</option>
+    <option value="white">❄ 白噪波纹理</option>
+  </select></div>
+  <div class="n-row"><span class="n-label">长 / 宽</span>
+    <label class="field">长 <input type="number" id="texLen" min="1" max="1024" step="1" value="32"></label>
+    <label class="field">宽 <input type="number" id="texWid" min="1" max="1024" step="1" value="32"></label>
+  </div>
+  <div class="n-row"><span class="n-label">生成大小</span>
+    <label class="field">宽 <input type="number" id="texW" min="1" max="4096" step="1" value="128"></label>
+    <label class="field">高 <input type="number" id="texH" min="1" max="4096" step="1" value="128"></label>
+  </div>
+  <div class="n-row"><span class="n-label">偏移量</span>
+    <label class="field">X <input type="number" id="texOffX" value="0"></label>
+    <label class="field">Y <input type="number" id="texOffY" value="0"></label>
+  </div>
+  <div class="n-row"><span class="n-label">缩放</span>
+    <label class="field"><input type="number" id="texScale" min="0.01" step="0.1" value="1"></label>
+    <span class="n-note">越大图案越平缓</span>
+  </div>
+  <div class="n-row"><span class="n-label">种子</span>
+    <label class="field"><input type="number" id="texSeed" step="1"></label>
+    <button class="btn" id="btnTexSeed" title="随机种子">🎲</button>
+    <span class="n-note">相同种子=相同纹理</span>
+  </div>
+  <div class="n-row"><span class="n-label">倍频</span>
+    <label class="field"><input type="number" id="texOct" min="1" max="8" step="1" value="4"></label>
+    <span class="n-note">细节层数（噪波/沃罗诺伊等）</span>
+  </div>
+  <div class="n-row"><span class="n-label">颜色</span>
+    <label class="field">A <input type="color" id="texColA" value="#3b82f6"></label>
+    <label class="field">B <input type="color" id="texColB" value="#1e3a8a"></label>
+    <span class="n-note">纹理双色</span>
+  </div>
+  <div class="n-row" style="justify-content:flex-end; margin-top:8px;">
+    <button class="btn primary" id="btnGenTexture">✨ 生成纹理</button>
+  </div>
+  <div class="n-note">生成位置：屏幕中心 · 支持撤销（Ctrl+Z）</div>
+</div>
+
+
+<!-- 二维码/条码生成器面板 -->
+<div id="qrcodePanel">
+  <div id="qrcodeHead"><span>🔳 二维码 / 条码生成器</span><button id="btnCloseQrcode" title="关闭">×</button></div>
+  <div class="n-row"><span class="n-label">纠错</span><select id="qrEc">
+    <option value="L" selected>L（容量最大）</option>
+    <option value="M">M</option>
+    <option value="Q">Q</option>
+    <option value="H">H（纠错最强）</option>
+  </select>
+    <span class="n-note">等级越高越抗损，容量越小</span>
+  </div>
+  <div class="n-row"><span class="n-label">类型</span><select id="qrType">
+    <option value="qr">🔳 二维码（QR）</option>
+    <option value="barcode">▮▯ 条码（Code 39）</option>
+  </select></div>
+  <div class="n-row"><span class="n-label">文本</span><input type="text" id="qrText" placeholder="输入要编码的文本…" style="flex:1;min-width:0" spellcheck="false"></div>
+  <div class="n-row"><span class="n-label">颜色</span>
+    <label class="field">条/模块 <input type="color" id="qrColA" value="#000000"></label>
+    <label class="field">背景 <input type="color" id="qrColB" value="#ffffff"></label>
+  </div>
+  <div class="n-row"><span class="n-label">大小</span>
+    <label class="field" id="qrSizeField">模块 <input type="number" id="qrSize" min="3" max="40" step="1" value="8"></label>
+    <span class="n-note">二维码=模块像素 / 条码=高度</span>
+  </div>
+  <div class="n-row" style="justify-content:flex-end; margin-top:8px;">
+    <button class="btn primary" id="btnGenQrcode">✨ 生成</button>
+  </div>
+  <div class="n-note" id="qrNote">生成位置：屏幕中心 · 支持撤销（Ctrl+Z）</div>
+</div>
+
 <!-- 数学方程图像面板 -->
 <div id="mathPanel">
   <div id="mathHead"><span>∑ 数学方程图像</span><button id="btnCloseMath" title="关闭">×</button></div>
@@ -756,6 +1091,7 @@
   <div id="nodeHead">
     <span>🧩 节点编辑器</span>
     <span style="display:flex;gap:8px;align-items:center">
+      <button class="btn" id="btnNodeFloat" title="把节点编辑器拖出来变成浮动窗口">⧉ 浮动</button>
       <button class="btn" id="btnScratchMax" title="放大为 Scratch 式全屏编辑器（积木拖放 + 舞台 + 实例信息）">⛶ 放大</button>
       <button id="btnCloseNode" title="关闭">×</button>
     </span>
@@ -785,6 +1121,8 @@
         <select id="nodeCatSelect" title="节点分类"></select>
         <select id="nodeTypeSelect" title="节点类型"></select>
         <button class="btn" id="btnNodeAdd" title="把选中的节点添加到节点图">➕ 添加</button>
+        <button class="btn" id="btnNodeAddCustom" style="display:none" title="新建自制节点：直接在编辑器中编写 JS 注册新节点，保存后立即生效">🧩 自制</button>
+        <button class="btn" id="btnSaveCustom" style="display:none" title="把新增/删除的自制节点状态保存到浏览器，重启网页后仍然保留">💾 保存</button>
         <button class="btn" id="btnPackGroup" title="把框选选中的节点打包为一个节点组（节点组分类中可复用/展开/导入导出）">📦 打包</button>
         <button class="btn" id="btnExportGroups" title="把所有节点组导出为 JSON 文件">📤 导出</button>
         <button class="btn" id="btnImportGroups" title="导入节点组 JSON 文件">📥 导入</button>
@@ -793,8 +1131,20 @@
         <button class="btn" id="btnZoomOut" title="缩小节点画布">－</button>
         <button class="btn" id="btnZoomReset" title="重置视图">⟲</button>
       </div>
+      <div id="soundRow" style="display:none">
+        <button class="btn" id="btnSoundImport" title="导入声音：mp3 / wav / ogg 等音频文件，或音乐编辑器导出的 JSON 工程文件（自动转码为 WAV），导入后可在「声音」分类节点的「声音A」下拉中选择">🔊 导入声音</button>
+        <div class="sound-box">
+          <div class="sound-box-title">已导入的声音 / 歌曲</div>
+          <div id="soundList" class="sound-list"></div>
+        </div>
+        <button class="btn" id="btnMusicEditor" title="在新标签页打开音乐编辑器（编辑歌曲后导出 JSON，再回到这里导入）">🎹 音乐编辑器</button>
+        <input type="file" id="soundFileInput" accept="audio/*,.json,application/json,text/json" style="display:none">
+      </div>
       <div id="groupEditRow" style="display:none;align-items:center;gap:8px;padding:4px 0">
         <span class="n-note" style="margin:0">✏️ 正在编辑节点组：<b id="groupEditName"></b></span>
+        <button class="btn" id="btnGroupPack" title="把画布上框选选中的节点打包为一个节点组（子组）">📦 打包</button>
+        <button class="btn" id="btnGroupUnpack" title="解包当前节点组：把组内节点重新放回上一层级（未打包状态）">🔄 解包</button>
+        <button class="btn primary" id="btnGroupSave" title="把当前所有节点组保存到浏览器，刷新后仍保留">💾 保存</button>
         <button class="btn primary" id="btnGroupDone" title="完成编辑，回到主节点图">✔ 完成</button>
       </div>
       <input type="file" id="importGroupsFile" accept=".json" style="display:none">
@@ -812,37 +1162,81 @@
     <span>🧩 节点编辑器（全屏） <span class="layers-hint">节点拖放 + 端口连线 · 舞台实时预览</span></span>
     <span style="display:flex;gap:8px;align-items:center">
       <button class="btn primary" id="btnScratchRun">⏹ 停止全部</button>
+      <button class="btn" id="scratchGroupPack" style="display:none" title="把画布上框选选中的节点打包为一个节点组（子组）">📦 打包</button>
+      <button class="btn" id="scratchGroupUnpack" style="display:none" title="解包当前节点组：把组内节点重新放回上一层级（未打包状态）">🔄 解包</button>
+      <button class="btn primary" id="scratchGroupSave" style="display:none" title="把当前所有节点组保存到浏览器，刷新后仍保留">💾 保存</button>
       <button class="btn primary" id="scratchGroupDone" style="display:none" title="完成节点组编辑，回到主节点图">✔ 完成编辑组</button>
-      <button class="btn" id="btnScratchBack" title="返回小面板布局">⬅ 返回</button>
+      <button class="btn" id="btnScratchBack" title="返回上一级（小面板或浮动窗）">⬅ 收回</button>
     </span>
   </div>
   <div id="scratchBody">
-    <div id="scratchCats"></div>
+    <div id="scratchCats"><div id="scratchSearchWrap" style="padding:2px 0 6px;box-sizing:border-box">
+      <input id="scratchSearch" placeholder="🔍 搜节点" title="搜索所有类型节点库中的节点（含自制与插件），支持名称 / 描述 / 类型" style="width:100%;background:rgba(255,255,255,.1);color:#eef1f6;border:1px solid rgba(255,255,255,.25);border-radius:6px;padding:5px 7px;font-size:12px;outline:none">
+    </div></div>
+    <div id="scratchPluginBox" style="display:none">
+      <div class="scratch-col-title" style="justify-content:center"><span>插件库</span><button class="plugin-help-btn" id="btnPluginHelp" title="显示/隐藏插件说明">?</button><button class="plugin-help-btn" id="btnPluginInfo" title="显示/隐藏导入信息">📥</button></div>
+      <div id="scratchPluginHelp" class="layers-hint" style="display:none">导入的外部 JS 插件（registerNodeType 注册节点，节点与插件都归入插件库）<br>暂无插件：点击下方【导入插件】添加外部编写的 JS 插件（插件通过 registerNodeType 注册节点，节点与插件都归入插件库）</div>
+      <div id="scratchPluginInfo" class="layers-hint" style="display:none;margin-bottom:6px"></div>
+      <button class="btn" id="scratchBtnNewPlugin" style="font-size:11px;padding:3px 8px;margin-bottom:6px" title="自制插件：打开 JS 编辑器，内置插件示例模板，可修改后保存生效">🧩 自制插件</button>
+      <button class="btn" id="scratchBtnImportPlugin" style="font-size:11px;padding:3px 8px" title="选择外部编写的 JS/TXT 插件文件（含 registerNodeType 注册节点类型）">📂 导入插件</button>
+      <div id="scratchPluginNewBox" style="margin-top:6px"></div>
+      <button class="btn primary" id="scratchBtnSavePlugin" style="display:none;font-size:11px;padding:3px 8px;margin-top:6px" title="把本次导入的插件永久保存到浏览器（不保存则刷新后重置）">💾 保存</button>
+    </div>
+    <!-- 已保存插件：插件库盒子外面、下方（保存按钮上方），点击【保存】后的插件存放位置 -->
+    <div id="scratchPluginSaved" style="margin-top:8px;display:none"></div>
+    <input type="file" id="scratchPluginFile" accept=".js,.txt,text/javascript,text/plain" style="display:none">
     <div id="scratchLib">
-      <div class="scratch-col-title">节点库 <span class="layers-hint">点击节点添加到画布（含「节点组」分类的可复用组）</span></div>
+      <div id="catsDivider" title="拖动调整分类栏宽度"></div>
+      <div id="libDivider" title="拖动调整节点库宽度"></div>
+      <div class="scratch-col-title">节点库 <span class="layers-hint">点击节点添加到画布</span></div>
       <div id="scratchPalette"></div>
-      <div class="scratch-col-title" style="margin-top:8px">变量 <span class="layers-hint">每个实例独立的值</span></div>
-      <div id="scratchVarRow">
-        <input type="text" id="scratchVarNameInput" placeholder="新变量名（点击可命名）">
-        <button class="btn" id="scratchVarBtn">➕ 添加新变量</button>
-        <div id="scratchVarList"></div>
+      <button class="btn" id="scratchBtnAddCustom" style="display:none;margin-bottom:8px;font-size:10px;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%" title="新建自制节点：直接在编辑器中编写 JS 注册新节点，保存后立即生效">🧩 ＋ 自制节点</button>
+      <button class="btn" id="scratchBtnSaveCustom" style="display:none;margin-bottom:8px;font-size:10px;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%" title="把新增/删除的自制节点状态保存到浏览器，重启网页后仍然保留">💾 保存自制节点</button>
+      <div id="scratchVarBlock" style="display:none">
+        <div class="scratch-col-title" style="margin-top:8px">变量</div>
+        <div id="scratchVarRow">
+          <input type="text" id="scratchVarNameInput" placeholder="新变量名（点击可命名）">
+          <button class="btn" id="scratchVarBtn">➕ 添加新变量</button>
+          <div id="scratchVarList"></div>
+        </div>
+        <div class="scratch-col-title" style="margin-top:8px">数组 <span class="layers-hint">每个实例独立的数字数组</span></div>
+        <div id="scratchArrRow">
+          <input type="text" id="scratchArrNameInput" placeholder="新数组名（点击可命名）">
+          <button class="btn" id="scratchArrBtn">➕ 添加新数组</button>
+          <div id="scratchArrList"></div>
+        </div>
+        <button class="btn primary" id="scratchVarSave" style="width:100%;margin-top:6px;font-size:11px;padding:4px 8px" title="把当前对象新增的变量/数组保存到浏览器，刷新后仍保留">💾 保存变量/数组</button>
       </div>
-      <div id="scratchGroupTools" title="节点组：框选打包 / 导出 / 导入 JSON 文件">
-        <button class="btn" id="scratchBtnPack" title="把画布上框选选中的节点打包为节点组">📦 打包</button>
+      <div id="scratchSoundBlock" style="display:none">
+        <div class="scratch-col-title" style="margin-top:8px">声音 <span class="layers-hint">导入音频文件，用「声音」分类节点播放</span></div>
+        <div id="scratchSoundRow">
+          <button class="btn" id="scratchBtnSoundImport" title="导入声音：mp3 / wav / ogg 等音频文件，或音乐编辑器导出的 JSON 工程文件（自动转码为 WAV），导入后可在「声音」分类节点的「声音A」下拉中选择">🔊 导入声音</button>
+        </div>
+        <div class="sound-box">
+          <div class="sound-box-title">已导入的声音 / 歌曲</div>
+          <div id="scratchSoundList" class="sound-list"></div>
+        </div>
+        <button class="btn" id="scratchBtnMusicEditor" style="margin-top:8px" title="在新标签页打开音乐编辑器（编辑歌曲后导出 JSON，再回到这里导入）">🎹 音乐编辑器</button>
+      </div>
+      <div id="scratchGroupTools" title="节点组：打包 / 保存 / 导出 / 导入 JSON 文件">
+        <button class="btn" id="scratchBtnPack" style="display:none" title="把画布上框选选中的节点打包为一个节点组">📦 打包</button>
+        <button class="btn primary" id="scratchBtnSaveGroups" style="display:none" title="把当前所有节点组保存到浏览器，刷新后仍保留">💾 保存</button>
         <button class="btn" id="scratchBtnExport" title="导出全部节点组为 JSON 文件">📤 导出</button>
         <button class="btn" id="scratchBtnImport" title="导入节点组 JSON 文件">📥 导入</button>
       </div>
     </div>
     <div id="scratchMain">
-      <div class="scratch-col-title">节点画布 <span class="layers-hint">拖动节点 · 端口连线 · 点 × 删节点</span></div>
+      <div class="scratch-col-title" style="display:flex;align-items:center;justify-content:space-between;gap:6px"><span id="scratchPathBar">节点画布 <span class="layers-hint">拖动节点 · 端口连线 · 点 × 删节点</span></span>
+        <button class="btn" id="btnCanvasFocus" style="font-size:11px;padding:2px 8px;flex-shrink:0" title="放大画布：隐藏节点分类/节点库/舞台，画布铺满（再次点击恢复）">⛶ 放大画布</button>
+      </div>
       <div id="scratchCanvas"></div>
     </div>
     <div id="scratchRight">
-      <div class="scratch-col-title">舞台（正方形 · 网格大小可调）</div>
+      <div id="stageDivider" title="拖动调整舞台大小"></div>
+      <div class="scratch-col-title" style="display:flex;align-items:center;justify-content:space-between;gap:6px">舞台（正方形 · 网格大小可调）<span style="display:flex;gap:4px;flex-shrink:0"><button class="btn" id="btnStageReset" style="font-size:11px;padding:2px 6px" title="重置视图：视图回中铺满舞台，对象实例回到内容中心">🔄</button><button class="btn" id="btnStageFloat" style="font-size:11px;padding:2px 6px" title="把舞台窗口拖出来，可随意移动与调整大小">⧉</button></span></div>
       <div id="stageBox"><canvas id="stageCanvas"></canvas></div>
       <div id="stageCtrl">
-        <label>舞台大小 <input type="range" id="stageSize" min="160" max="560" step="10" value="320"><span id="stageSizeVal">320</span>px</label>
-        <label>网格大小 <input type="range" id="stageGrid" min="25" max="400" step="5" value="100"><span id="stageGridVal">100</span>%</label>
+        <label>网格大小 <input type="range" id="stageGrid" min="20" max="500" step="5" value="100"><span id="stageGridVal">100</span>%</label>
       </div>
       <div class="scratch-col-title">对象与实例 <span class="layers-hint">选择对象后「⬇ 实例化」添加到当前图层</span></div>
       <div style="display:flex;gap:6px">
@@ -860,13 +1254,21 @@
   </div>
 </div>
 
-<!-- 统计结果面板 -->
-<div id="statsPanel">
-  <div id="statsPanelHead"><span>📊 图像统计</span><button id="btnCloseStats" title="关闭">×</button></div>
+<!-- 框选控制栏（尺寸缩放 / 图像统计 / RotSprite 旋转） -->
+<div id="selectPanel">
+  <div id="selectPanelHead"><span>▢ 框选控制</span><button id="btnCloseSelect" title="关闭">×</button></div>
+  <div id="selInfo" class="sel-note"></div>
+  <div class="sel-row"><label>宽度</label><input type="number" id="selW" min="1"><label>长度</label><input type="number" id="selH" min="1"><button class="btn" id="btnSelScale" title="最近邻缩放框选内容到新尺寸（保持像素锐利）">应用缩放</button></div>
+  <div class="sel-row"><label>旋转°</label><input type="number" id="selAngle" value="90" step="15"><button class="btn primary" id="btnSelRotate" title="RotSprite 算法：先放大 4 倍 → 旋转 → 面积平均缩小，最大程度保留像素边缘">↻ RotSprite 旋转</button></div>
+  <div class="sel-row"><button class="btn" id="btnSelStats" title="统计框选区域的像素数与颜色分布">📊 图像统计</button><span style="font-size:11px;color:#5b6472">点击后统计</span></div>
+  <div class="sel-row" id="selExportRow" style="display:none">
+    <button class="btn" id="btnStatsCsv" title="单独导出统计表（CSV）">⬇ 统计表</button>
+    <button class="btn primary" id="btnStatsPngCsv" title="同时导出图片 PNG 和统计表 CSV">⬇ 图像+统计表</button>
+  </div>
   <div id="statsBody"></div>
-  <div id="statsFoot">
-    <button class="btn" id="btnStatsCsv" title="单独导出统计表（CSV）">⬇ 导出统计表</button>
-    <button class="btn primary" id="btnStatsPngCsv" title="同时导出图片 PNG 和统计表 CSV">⬇ 图片+统计表</button>
+  <div id="selStats"></div>
+  <div id="selectFoot">
+    <button class="btn" id="btnSelClear" title="清除当前框选区域">🗑 清除框选</button>
   </div>
 </div>
 
@@ -876,14 +1278,33 @@
 <div id="colorInfo"></div>
 
 <div id="hint">
-  <b>左键拖动</b>：绘制 / 图形 / 统计 · <b>右键拖动</b>：平移 · <b>滚轮</b>：缩放<br>
-  <b>空格+左键</b>：平移 · <b>触屏</b>：单指绘制，双指缩放/平移 · B/E：画笔/橡皮 · H：隐藏 · Ctrl+Z 撤销<br>
-  左侧 ▤ 图层：新建/复制/删除/隐藏图层 · 右侧工具栏：封闭图形（矩形/圆形/三角形）/ 填充 / 直线 / 统计 · ⋯ 更多：拾色器、噪声、数学方程
+  <b>左键拖动</b>：绘制 / 图形 / 统计 · <b>右键拖动</b>：平移 · <b>滚轮</b>：缩放 · <b>空格+左键</b>：平移 · <b>触屏</b>：单指绘制，双指缩放/平移 · B/E：画笔/橡皮 · H：隐藏 · Ctrl+Z 撤销 · 左侧 ▤ 图层：新建/复制/删除/隐藏 · 右侧工具栏：封闭图形/填充/直线/统计 · ⋯ 更多：拾色器、噪声、数学方程
 </div>
 
 <div id="importStatus"></div>
 
 <!-- 设置面板 -->
+<div id="nodeJsModal">
+  <div id="nodeJsPanel">
+    <div id="nodeJsHead"><b id="nodeJsTitle">编辑自制节点</b><span style="display:flex;align-items:center;gap:8px"><button class="btn" id="nodeJsLock" title="锁定 / 解锁文本编辑（默认锁定，打开后才能编辑）" style="font-size:11px;padding:3px 10px">🔒 已锁定</button><button id="nodeJsClose" title="关闭">×</button></span></div>
+    <div style="font-size:12px;color:#8b93a1;margin-bottom:6px">直接编辑 JS：<code>registerNodeType('id', {…})</code> 注册节点。</div>
+    <div id="nodeJsEditorBox">
+      <div id="nodeJsEdit" contenteditable="true" spellcheck="false" data-placeholder="registerNodeType(&#39;myNode&#39;, { … });"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap">
+      <button class="btn" id="nodeJsImport" title="导入外部写好的节点 JS / TXT 文件">📂 导入 js/txt</button>
+      <button class="btn" id="nodeJsExport" title="把当前代码导出为 .js 文件">⬇ 导出 js</button>
+      <span style="font-size:11px;color:#5b6472">可导入外部写好的节点 JS 文件，或导出当前内容</span>
+    </div>
+    <input type="file" id="nodeJsImportFile" accept=".js,.txt,text/javascript,text/plain" hidden>
+    <div id="nodeJsErr"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+      <button class="btn" id="nodeJsDelete" style="color:#f87171" title="删除当前编辑的节点（同时清除本地保存）">🗑 删除节点</button>
+      <button class="btn" id="nodeJsCancel">取消</button>
+      <button class="btn primary" id="nodeJsSave">💾 保存并生效</button>
+    </div>
+  </div>
+</div>
 <div id="settingsMask">
   <div id="settingsPanel">
     <div id="settingsHead">
@@ -972,7 +1393,8 @@
       <span class="s-label">工程</span>
       <label class="field">导出格式
         <select id="settingsExportFormat" title="导出工程文件的格式">
-          <option value="v3" selected>v3 紧凑格式</option>
+          <option value="v5" selected>v5 全图层</option>
+          <option value="v3">v3 紧凑格式</option>
           <option value="v2">v2 旧版兼容</option>
         </select>
       </label>
@@ -980,7 +1402,23 @@
         <input type="range" id="settingsCompressLevel" min="0" max="10" step="1" value="6">
         <span id="settingsCompressLevelVal">6</span>
       </label>
-      <span class="s-note">v3：调色板+RLE，可压缩 · v2：pixels 明文数组（文件较大，兼容旧版）；导入自动识别两种格式</span>
+      <span class="s-note">v5：每图层独立 pixels 数组（导入逐层恢复，不损失图层像素）· v3：调色板+RLE，可压缩 · v2：pixels 明文数组（兼容旧版）；导入自动识别三种格式</span>
+    </div>
+    <div class="s-row">
+      <span class="s-label">导出图片</span>
+      <label class="field">格式
+        <select id="settingsExportImageFormat" title="导出图片的文件格式（GIF/APNG 为动图，按图层顺序每图层一帧）">
+          <option value="png" selected>PNG（透明）</option>
+          <option value="jpg">JPG / JPEG</option>
+          <option value="webp">WebP</option>
+          <option value="gif">GIF（动图）</option>
+          <option value="apng">APNG（动图）</option>
+        </select>
+      </label>
+      <span class="s-note">GIF / APNG 动图：每个可见图层 → 一帧（从下到上）</span>
+    </div>
+    <div class="s-row" style="justify-content:space-between;align-items:center;border-top:1px solid rgba(255,255,255,.12);margin-top:8px;padding-top:8px">
+      <button class="btn primary" id="btnSaveSettings" title="把当前设置保存到浏览器（刷新后自动恢复）">💾 保存设置</button>
     </div>
   </div>
 </div>
@@ -1024,19 +1462,57 @@
       </div>
     </div>
     <div id="modalFoot">
+      <button class="btn" id="modalBtnLibrary" title="笔刷库：保存/导入的笔刷都会存到这里，点击即可设为当前笔刷">📚 笔刷库</button>
       <button class="btn" id="modalBtnClear">清空画板</button>
       <button class="btn" id="modalBtnImport" title="导入笔刷 JSON">导入笔刷</button>
       <button class="btn" id="modalBtnExport" title="导出笔刷 JSON">导出笔刷</button>
-      <button class="btn primary" id="modalBtnSave">💾 保存为当前笔刷</button>
+      <button class="btn primary" id="modalBtnSave">💾 保存</button>
     </div>
   </div>
+  <div id="brushLibrary" style="display:none">
+      <div class="bl-head"><span>📚 笔刷库 <span class="layers-hint" style="font-weight:400">点击笔刷设为当前笔刷</span></span><span class="bl-close" title="关闭" style="cursor:pointer;color:#9aa0ab;font-size:16px;line-height:1">×</span></div>
+      <div id="brushLibraryList"></div>
+    </div>
+
   <input type="file" id="modalFileInput" accept=".json,application/json" hidden>
 </div>
 
+<div id="nodeCtxMenu" style="display:none;position:fixed;z-index:300;min-width:130px;background:#1f2733;border:1px solid #3a4256;border-radius:8px;padding:4px;box-shadow:0 6px 24px rgba(0,0,0,.5)">
+  <button class="btn" id="nodeCtxUndo" style="display:flex;width:100%;justify-content:flex-start;font-size:12px;padding:5px 8px;border:none">↶ 撤销</button>
+  <button class="btn" id="nodeCtxRedo" style="display:flex;width:100%;justify-content:flex-start;font-size:12px;padding:5px 8px;border:none">↷ 重做</button>
+  <button class="btn" id="nodeCtxCopy" style="display:flex;width:100%;justify-content:flex-start;font-size:12px;padding:5px 8px;border:none">📋 复制框选节点</button>
+  <button class="btn" id="nodeCtxPaste" style="display:flex;width:100%;justify-content:flex-start;font-size:12px;padding:5px 8px;border:none">📥 粘贴节点</button>
+  <button class="btn" id="nodeCtxPack" style="display:flex;width:100%;justify-content:flex-start;font-size:12px;padding:5px 8px;border:none">📦 打包为节点组</button>
+  <button class="btn" id="nodeCtxDelete" style="display:flex;width:100%;justify-content:flex-start;font-size:12px;padding:5px 8px;border:none">🗑 删除框选节点</button>
+</div>
+<div id="stageFloatWin" style="display:none;position:fixed;z-index:300;background:#2c3444;border:1px solid #4a5568;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.5)">
+  <div id="stageFloatBar" style="cursor:move;padding:10px 16px;font-size:13px;color:#dde2ea;display:flex;justify-content:space-between;align-items:center;user-select:none;gap:12px">🎥 舞台（拖住此处移动）<button class="btn" id="btnStageFloatBack" style="font-size:11px;padding:4px 10px" title="舞台收回右侧栏">收回</button></div>
+  <div id="stageFloatBody" style="display:flex;align-items:center;justify-content:center;padding:6px"></div>
+  <div id="stageFloatResize" style="position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,#5a6472 50%)"></div>
+</div>
+<div id="nodeFloatWin" style="display:none;position:fixed;z-index:310;background:#2c3444;border:1px solid #4a5568;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.5);font-size:12px;line-height:1.8">
+  <div id="nodeFloatBar" style="cursor:move;padding:10px 16px;font-size:13px;color:#dde2ea;display:flex;justify-content:space-between;align-items:center;user-select:none;gap:12px">🧩 节点编辑器（拖住此处移动）<span style="display:flex;gap:8px;align-items:center"><button class="btn" id="btnNodeFloatMax" style="font-size:11px;padding:4px 10px" title="放大为全屏节点编辑器">⛶ 放大</button><button class="btn" id="btnNodeFloatBack" style="font-size:11px;padding:4px 10px" title="节点编辑器收回面板">收回</button><button id="btnNodeFloatClose" title="关闭节点编辑器" style="background:none;border:none;color:#9aa0ab;font-size:16px;cursor:pointer;line-height:1;padding:0 4px">×</button></span></div>
+  <div id="nodeFloatBody" style="height:calc(100% - 44px);overflow:auto;padding:12px 14px;box-sizing:border-box"></div>
+  <div id="nodeFloatResize" style="position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,#5a6472 50%)"></div>
+</div>
+<div id="brushPanel" style="display:none;position:fixed;z-index:220;background:#23252c;border:1px solid #3a4256;border-radius:10px;padding:10px 12px;box-shadow:0 8px 30px rgba(0,0,0,.5);min-width:210px">
+  <div style="font-size:12px;color:#c7cdd8;margin-bottom:8px;font-weight:700">笔刷 / 橡皮 / 颜色</div>
+  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cfd3dc;margin:4px 0">笔刷 <select id="bpBrushMode" style="flex:1"><option value="square">方块笔刷</option><option value="custom">自定义笔刷</option></select></label>
+  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cfd3dc;margin:4px 0">笔刷大小 <input type="range" id="bpBrushSize" min="1" max="32" step="1" value="4" style="flex:1"><span id="bpBrushSizeVal">4</span></label>
+  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cfd3dc;margin:4px 0">橡皮 <select id="bpEraserMode" style="flex:1"><option value="square">方块橡皮</option><option value="custom">自定义橡皮</option></select></label>
+  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cfd3dc;margin:4px 0">橡皮大小 <input type="range" id="bpEraserSize" min="1" max="32" step="1" value="4" style="flex:1"><span id="bpEraserSizeVal">4</span></label>
+  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cfd3dc;margin:4px 0">颜色 <input type="color" id="bpColor" value="#3b82f6" style="flex:1"></label>
+</div>
+<script src="image-codecs.js"></script>
 <script src="pixel-canvas.js"></script>
+<script src="texture.js"></script>
+<script src="qr.js"></script>
 <script src="node-system.js"></script>
 <script src="node-ther.js"></script>
 <script src="vector-canvas.js"></script>
 
 </body>
 </html>
+
+  <div class="n-row" id="textureSeedHist" style="flex-wrap:wrap"></div>
+  <div class="n-row" id="noiseSeedHist" style="flex-wrap:wrap"></div>
