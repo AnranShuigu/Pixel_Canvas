@@ -229,7 +229,7 @@
   /* ---- 右侧工具栏 ---- */
   #sideToolbar {
     position: fixed; right: 12px; top: 50%; transform: translateY(-50%);
-    z-index: 12;
+    z-index: 30; /* 高于节点编辑器面板(13)等，确保节点面板打开时工具栏仍可点击 */
     display: flex; flex-direction: column; gap: 5px; align-items: center;
     background: rgba(28,30,36,.92);
     padding: 8px 6px;
@@ -783,12 +783,446 @@
 .export-fmt-item.active{background:#3b82f6;color:#fff}
 .img-fmt-item:hover{background:#24304a;color:#fff}
 .img-fmt-item.active{background:#3b82f6;color:#fff}
+
+/* ============ 内嵌音乐编辑器（移植自音乐编辑器网站） ============ */
+#musicEditorPanel {
+  position: fixed; inset: 0; z-index: 400; display: none; flex-direction: column;
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+  background: #16171c; color: #e8e8ec; user-select: none; -webkit-user-select: none;
+}
+#musicEditorPanel #me-toolbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  padding: 8px 14px; background: #22242c; border-bottom: 1px solid #34363f; z-index: 20;
+  flex-wrap: wrap;
+}
+#musicEditorPanel .brand { font-weight: 700; font-size: 15px; letter-spacing: 1px; margin-right: 8px; color: #7aa2ff; white-space: nowrap; text-decoration: none; cursor: pointer; }
+#musicEditorPanel #me-toolbar button {
+  font-family: inherit; font-size: 13px; color: #d5d7de; background: #2d303a;
+  border: 1px solid #3d414d; border-radius: 7px; padding: 5px 11px; cursor: pointer;
+  white-space: nowrap; transition: background .15s, border-color .15s;
+}
+#musicEditorPanel #me-toolbar button:hover { background: #3a3e4b; border-color: #5b6070; color: #fff; }
+#musicEditorPanel #me-toolbar button:active { background: #262932; }
+#musicEditorPanel #me-toolbar button.on { background: #2f4a3c; border-color: #4f9e6f; color: #8ff0b3; }
+#musicEditorPanel #me-toolbar .sep { width: 1px; height: 22px; background: #3d414d; margin: 0 5px; }
+#musicEditorPanel .field { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #9aa0ac; }
+#musicEditorPanel input[type=number], #musicEditorPanel select {
+  font-family: inherit; font-size: 12px; color: #d5d7de; background: #2d303a;
+  border: 1px solid #3d414d; border-radius: 6px; padding: 3px 6px; width: 62px;
+}
+#musicEditorPanel input[type=range] { width: 90px; accent-color: #7aa2ff; }
+#musicEditorPanel #me-save-info { margin-left: auto; font-size: 12px; color: #8a8f9c; padding-right: 6px; white-space: nowrap; }
+#musicEditorPanel #me-tracks { flex: 1; overflow-y: auto; padding: 10px 14px 24px; display: flex; flex-direction: column; gap: 4px; }
+#musicEditorPanel #me-tracks > .track { flex-shrink: 0; }
+#musicEditorPanel .track-divider { height: 7px; margin: 0 2px; cursor: ns-resize; border-radius: 3px; background: transparent; flex: 0 0 auto; }
+#musicEditorPanel .track-divider:hover { background: rgba(122,162,255,.35); }
+#musicEditorPanel .track { background: #1d1f26; border: 1px solid #2e313b; border-radius: 10px; overflow: hidden; }
+#musicEditorPanel .track-head {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  background: #22242c; border-bottom: 1px solid #2e313b;
+}
+#musicEditorPanel .track-head .swatch { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
+#musicEditorPanel .track-head input[type=text] {
+  font-family: inherit; font-size: 13px; color: #e8e8ec; background: #2a2d37;
+  border: 1px solid #3d414d; border-radius: 6px; padding: 3px 8px; width: 120px;
+}
+#musicEditorPanel .track-head select {
+  font-family: inherit; font-size: 12px; color: #d5d7de; background: #2d303a;
+  border: 1px solid #3d414d; border-radius: 6px; padding: 3px 6px;
+}
+#musicEditorPanel .track-head .spacer { flex: 1; }
+#musicEditorPanel .track-head button {
+  font-family: inherit; font-size: 12px; color: #d5d7de; background: #2d303a;
+  border: 1px solid #3d414d; border-radius: 6px; padding: 3px 9px; cursor: pointer;
+}
+#musicEditorPanel .track-head button:hover { background: #3a3e4b; }
+#musicEditorPanel .track-head button.on { background: #4a3c2f; border-color: #9e7a4f; color: #f0c88f; }
+#musicEditorPanel .track-head .del:hover { background: #4a2f2f; border-color: #9e4f4f; color: #f0a0a0; }
+#musicEditorPanel .track-head .row-count { font-size: 11px; color: #8a8f9c; }
+#musicEditorPanel .grid-area { display: flex; align-items: stretch; }
+#musicEditorPanel .row-labels { flex: 0 0 auto; display: flex; flex-direction: column; background: #1a1c22; border-right: 1px solid #2e313b; }
+#musicEditorPanel .row-label { width: 52px; height: 22px; line-height: 22px; font-size: 11px; text-align: right; padding-right: 8px; color: #8a8f9c; flex: 0 0 22px; }
+#musicEditorPanel .row-label.highlight { color: #e8e8ec; }
+#musicEditorPanel .cells-scroll { flex: 1; overflow-x: auto; overflow-y: auto; position: relative; }
+#musicEditorPanel .cells-grid { display: grid; position: relative; }
+#musicEditorPanel .notes-layer { position: absolute; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none; z-index: 2; }
+#musicEditorPanel .note {
+  position: absolute; height: 20px; border-radius: 3px; cursor: pointer;
+  background: var(--col, #7aa2ff); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25);
+  pointer-events: auto;
+}
+#musicEditorPanel .note:hover { filter: brightness(1.15); }
+#musicEditorPanel .note.selected { outline: 2px solid #ffd166; outline-offset: 1px; }
+#musicEditorPanel .note .x {
+  display: none; position: absolute; right: -2px; top: -9px; width: 15px; height: 15px;
+  line-height: 13px; text-align: center; background: #e34c4c; color: #fff;
+  border-radius: 50%; font-size: 10px; cursor: pointer; z-index: 3;
+}
+#musicEditorPanel .note:hover .x { display: block; }
+#musicEditorPanel .note-marquee {
+  position: absolute; border: 1.5px dashed #ffd166; background: rgba(255,209,102,.12);
+  pointer-events: none; z-index: 4; display: none;
+}
+#musicEditorPanel #me-btnNoteSelect.on { background: #3b82f6; color: #fff; }
+#musicEditorPanel .note::after {
+  content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 5px;
+  background: rgba(255,255,255,.35); border-radius: 0 3px 3px 0; cursor: ew-resize;
+}
+#musicEditorPanel .cell {
+  width: 26px; height: 22px; border-right: 1px solid #262933; border-bottom: 1px solid #262933;
+  background: #1c1e25; cursor: pointer;
+}
+#musicEditorPanel .cell:hover { background: #262a36; }
+#musicEditorPanel .cell.beat { border-right-color: #3a3f4d; }
+#musicEditorPanel .cell.bar { border-right-color: #565c6e; }
+#musicEditorPanel .cell.on { background: var(--col, #7aa2ff); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+#musicEditorPanel .cell.on:hover { filter: brightness(1.15); }
+#musicEditorPanel .playhead { position: absolute; top: 0; width: 2px; background: #ffd166; box-shadow: 0 0 6px #ffd166; z-index: 5; pointer-events: none; }
+#musicEditorPanel .step-ruler { display: flex; position: sticky; top: 0; z-index: 4; background: #1d1f26; }
+#musicEditorPanel .step-ruler div {
+  width: 26px; height: 14px; line-height: 14px; font-size: 9px; text-align: center;
+  color: #6a6f7d; border-right: 1px solid #262933; flex: 0 0 26px;
+}
+#musicEditorPanel .step-ruler div.beat { color: #aab0bf; border-right-color: #3a3f4d; }
+#musicEditorPanel .step-ruler div.bar { color: #d5d7de; border-right-color: #565c6e; }
+#musicEditorPanel #me-statusbar {
+  flex: 0 0 auto; display: flex; gap: 16px; padding: 6px 14px; font-size: 12px;
+  color: #8a8f9c; background: #22242c; border-top: 1px solid #34363f;
+}
+#musicEditorPanel #me-statusbar b { color: #d5d7de; }
+
+
+/* ============ 内嵌音频编辑器（移植自音频编辑器网站） ============ */
+#audioEditorPanel { display: none; flex-direction: column; position: fixed; inset: 0; z-index: 400; background: #0f1117; color: #e6e8ee; }
+
+#audioEditorPanel .top-bar {
+
+    position: fixed; top: 0; left: 0; right: 0; height: 46px; z-index: 20;
+    display: flex; align-items: center; gap: 6px; padding: 0 10px;
+    background: rgba(22,26,35,.92); border-bottom: 1px solid #2c313d;
+    user-select: none; flex-wrap: nowrap; overflow-x: auto;
+  
+}
+#audioEditorPanel .top-bar .brand {
+ color: #7dd3fc; font-weight: 700; font-size: 15px; text-decoration: none; white-space: nowrap; padding: 4px 8px; border-radius: 6px; 
+}
+#audioEditorPanel .top-bar .brand:hover {
+ background: rgba(255,255,255,.1); 
+}
+#audioEditorPanel .top-bar .sep {
+ width: 1px; height: 24px; background: #2c313d; margin: 0 4px; flex: none; 
+}
+#audioEditorPanel .t-btn {
+
+    background: none; border: 1px solid transparent; color: #cfd3dc; cursor: pointer;
+    font-size: 13px; padding: 5px 9px; border-radius: 6px; white-space: nowrap; flex: none;
+  
+}
+#audioEditorPanel .t-btn:hover {
+ background: rgba(255,255,255,.1); color: #fff; 
+}
+#audioEditorPanel .t-btn.active {
+ background: rgba(59,130,246,.25); border-color: #3b82f6; 
+}
+#audioEditorPanel .t-btn.danger:hover {
+ background: rgba(239,68,68,.2); color: #f87171; 
+}
+#audioEditorPanel .t-btn:disabled {
+ opacity: .4; cursor: default; 
+}
+#audioEditorPanel /* 通用面板（停靠 / 浮动 / 隐藏） */
+  .pane {
+
+    position: relative; min-width: 0; min-height: 0; background: #10131b;
+    display: flex; flex-direction: column; overflow: hidden;
+  
+}
+#audioEditorPanel .pane-head {
+
+    flex: none; display: flex; align-items: center; gap: 2px; padding: 2px 6px;
+    background: rgba(59,130,246,.12); border-bottom: 1px solid #1f232c; cursor: grab;
+    font-size: 11px; color: #9aa0ac; user-select: none;
+  
+}
+#audioEditorPanel .pane-head .ph-title {
+ flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; 
+}
+#audioEditorPanel .pane-head button {
+ background: none; border: 1px solid transparent; color: #9aa0ac; cursor: pointer; font-size: 12px; padding: 1px 5px; border-radius: 4px; 
+}
+#audioEditorPanel .pane-head button:hover {
+ background: rgba(255,255,255,.15); color: #fff; 
+}
+#audioEditorPanel .pane canvas {
+ flex: 1; width: 100%; height: 100%; display: block; 
+}
+#audioEditorPanel .pane.float {
+
+    position: fixed; z-index: 45; width: 460px; height: 280px;
+    background: #10131b; border: 1px solid #3b82f6; border-radius: 8px;
+    resize: both; overflow: hidden; box-shadow: 0 8px 26px rgba(0,0,0,.55);
+  
+}
+#audioEditorPanel .pane.drag,
+#audioEditorPanel .pane-head.drag {
+ cursor: grabbing; 
+}
+#audioEditorPanel /* 主区（波形 + 频谱，flex 纵向，可调分界） */
+  #mainArea {
+ position: fixed; left: 0; top: 46px; bottom: 210px; z-index: 5; display: flex; flex-direction: column; 
+}
+#audioEditorPanel #pane-wave {
+ flex: 0 0 54%; 
+}
+#audioEditorPanel #pane-spec {
+ flex: 1; border-top: 1px solid #2c313d; 
+}
+#audioEditorPanel #hSplitter {
+
+    flex: none; height: 6px; cursor: ns-resize; background: transparent; z-index: 8;
+  
+}
+#audioEditorPanel #hSplitter:hover,
+#audioEditorPanel #hSplitter.drag {
+ background: rgba(59,130,246,.55); 
+}
+#audioEditorPanel /* 右侧控制面板（可隐藏 / 可浮动 / 宽度可拖） */
+  #tools {
+
+    position: fixed; right: 10px; top: 56px; bottom: 220px; width: 300px; z-index: 15;
+    background: rgba(22,26,35,.97); border: 1px solid #2c313d; border-radius: 12px;
+    overflow: hidden; user-select: none; display: flex; flex-direction: column;
+  
+}
+#audioEditorPanel #tools.float {
+ position: fixed; right: auto; top: auto; bottom: auto; width: 300px; height: 480px; resize: both; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,.5); 
+}
+#audioEditorPanel #toolsHead {
+
+    flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 8px;
+    background: rgba(59,130,246,.12); border-bottom: 1px solid #2c313d; cursor: grab;
+  
+}
+#audioEditorPanel #toolsHead.drag {
+ cursor: grabbing; 
+}
+#audioEditorPanel #toolsHead .th-title {
+ font-size: 12px; font-weight: 700; color: #7dd3fc; flex: 1; 
+}
+#audioEditorPanel #toolsHead button {
+ background: none; border: 1px solid transparent; color: #9aa0ac; cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 5px; 
+}
+#audioEditorPanel #toolsHead button:hover {
+ background: rgba(255,255,255,.12); color: #fff; 
+}
+#audioEditorPanel #toolsBody {
+ flex: 1; overflow-y: auto; padding: 10px 12px; 
+}
+#audioEditorPanel #toolsBody::-webkit-scrollbar {
+ width: 6px; 
+}
+#audioEditorPanel #toolsBody::-webkit-scrollbar-thumb {
+ background: #3d414d; border-radius: 3px; 
+}
+#audioEditorPanel /* 面板宽度分界手柄 */
+  #vSplitter {
+
+    position: fixed; right: 316px; top: 56px; bottom: 220px; width: 6px; z-index: 14;
+    cursor: ew-resize; background: transparent;
+  
+}
+#audioEditorPanel #vSplitter:hover,
+#audioEditorPanel #vSplitter.drag {
+ background: rgba(59,130,246,.55); 
+}
+#audioEditorPanel /* 主区 / 底部区（时间条所在区域）垂直分界：拖动调整上下面板大小，时间条位置随动 */
+  #vAreaSplitter {
+
+    position: fixed; left: 0; right: 0; bottom: 210px; height: 6px; z-index: 12;
+    cursor: ns-resize; background: transparent;
+  
+}
+#audioEditorPanel #vAreaSplitter:hover,
+#audioEditorPanel #vAreaSplitter.drag {
+ background: rgba(59,130,246,.55); 
+}
+#audioEditorPanel .tl {
+ font-weight: 700; color: #7dd3fc; margin: 12px 0 6px; font-size: 13px; 
+}
+#audioEditorPanel .tl:first-child {
+ margin-top: 0; 
+}
+#audioEditorPanel .row {
+ display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; 
+}
+#audioEditorPanel .row label {
+ font-size: 11px; color: #9aa0ac; min-width: 74px; 
+}
+#audioEditorPanel .row input[type=range] {
+ flex: 1; accent-color: #3b82f6; min-width: 60px; 
+}
+#audioEditorPanel .row input[type=number],
+#audioEditorPanel .row input[type=text] {
+
+    width: 70px; background: #1a1f2b; border: 1px solid #3d414d; color: #fff;
+    border-radius: 5px; padding: 2px 4px; font-size: 12px;
+  
+}
+#audioEditorPanel .row .val {
+ font-size: 11px; color: #cfd3dc; min-width: 40px; text-align: right; 
+}
+#audioEditorPanel .a-btn {
+
+    background: #1a1f2b; border: 1px solid #3d414d; color: #cfd3dc; cursor: pointer;
+    font-size: 12px; padding: 4px 10px; border-radius: 6px;
+  
+}
+#audioEditorPanel .a-btn:hover {
+ background: rgba(59,130,246,.25); border-color: #3b82f6; color: #fff; 
+}
+#audioEditorPanel .a-btn.primary {
+ background: rgba(59,130,246,.2); border-color: #3b82f6; 
+}
+#audioEditorPanel .out {
+ font-size: 11px; color: #9aa0ac; margin-top: 4px; line-height: 1.5; word-break: break-all; 
+}
+#audioEditorPanel /* 面板管理列表 */
+  .plist-row {
+ display: flex; align-items: center; gap: 6px; padding: 3px 2px; font-size: 12px; 
+}
+#audioEditorPanel .plist-row:hover {
+ background: rgba(255,255,255,.05); 
+}
+#audioEditorPanel .plist-row label {
+ flex: 1; color: #cfd3dc; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; 
+}
+#audioEditorPanel .plist-row input[type=checkbox] {
+ accent-color: #3b82f6; cursor: pointer; 
+}
+#audioEditorPanel .plist-row button {
+ background: #1a1f2b; border: 1px solid #3d414d; color: #9aa0ac; cursor: pointer; border-radius: 4px; font-size: 11px; padding: 1px 6px; 
+}
+#audioEditorPanel .plist-row button.on {
+ background: rgba(59,130,246,.3); border-color: #3b82f6; color: #fff; 
+}
+#audioEditorPanel /* 底部：时间进度条 + 分析区（三个面板，横向可调） */
+  #bottomArea {
+ position: fixed; left: 0; right: 0; bottom: 0; height: 210px; z-index: 10; background: #0c0f15; border-top: 1px solid #2c313d; display: flex; flex-direction: column; 
+}
+#audioEditorPanel #progressWrap {
+ flex: none; height: 36px; display: flex; align-items: center; gap: 10px; padding: 0 12px; 
+}
+#audioEditorPanel #progressWrap .pt {
+ font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #7dd3fc; min-width: 64px; text-align: center; 
+}
+#audioEditorPanel #progressBar {
+ flex: 1; accent-color: #f59e0b; cursor: pointer; 
+}
+#audioEditorPanel #analyzeWrap {
+ flex: 1; display: flex; gap: 0; padding: 0 10px 8px; min-height: 0; 
+}
+#audioEditorPanel #pane-mWave {
+ flex: 0 0 34%; border-radius: 8px 0 0 8px; border: 1px solid #1f232c; 
+}
+#audioEditorPanel #pane-mSpec {
+ flex: 0 0 33%; border-top: 1px solid #1f232c; border-bottom: 1px solid #1f232c; 
+}
+#audioEditorPanel #pane-mSTFT {
+ flex: 1; border-radius: 0 8px 8px 0; border: 1px solid #1f232c; 
+}
+#audioEditorPanel .ana-splitter {
+ flex: none; width: 6px; cursor: ew-resize; background: transparent; 
+}
+#audioEditorPanel .ana-splitter:hover,
+#audioEditorPanel .ana-splitter.drag {
+ background: rgba(59,130,246,.55); 
+}
+#audioEditorPanel /* 浮动恢复按钮 */
+  #btnToolsShow {
+
+    position: fixed; right: 14px; top: 56px; z-index: 30;
+    background: rgba(59,130,246,.95); color: #fff; border: none; border-radius: 8px;
+    padding: 7px 12px; font-size: 12px; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.4);
+  
+}
+#audioEditorPanel /* 物理建模覆盖层 */
+  #physOverlay {
+
+    position: fixed; inset: 0; background: rgba(5, 8, 12, .78); z-index: 200;
+    display: flex; align-items: center; justify-content: center;
+  
+}
+#audioEditorPanel #physPanel {
+
+    width: min(760px, 94vw); max-height: 88vh; overflow: auto; background: #0d1119;
+    border: 1px solid #2b4a78; border-radius: 14px; padding: 16px 18px; color: #e6e9ef;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, .6);
+  
+}
+#audioEditorPanel #physPanel h2 {
+ margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 8px; 
+}
+#audioEditorPanel #physPanel .desc {
+ font-size: 11px; color: #8b93a1; line-height: 1.6; margin-bottom: 10px; 
+}
+#audioEditorPanel #physPanel .close {
+ margin-left: auto; background: none; border: none; color: #8b93a1; font-size: 16px; cursor: pointer; 
+}
+#audioEditorPanel #physPanel .close:hover {
+ color: #f87171; 
+}
+#audioEditorPanel #physPanel .tl {
+ font-size: 12px; color: #a5b4fc; margin: 10px 0 4px; 
+}
+#audioEditorPanel #physPanel .row {
+ display: flex; align-items: center; gap: 6px; margin: 5px 0; font-size: 12px; flex-wrap: wrap; 
+}
+#audioEditorPanel #physPanel .row label {
+ flex: 0 0 auto; min-width: 64px; color: #9aa0ac; 
+}
+#audioEditorPanel #physPanel .row input[type=range] {
+ flex: 1; min-width: 120px; accent-color: #3b82f6; 
+}
+#audioEditorPanel #physPanel .row input[type=number],
+#audioEditorPanel #physPanel .row select {
+ width: 96px; background: #10141c; color: #e6e9ef; border: 1px solid #2a3240; border-radius: 6px; padding: 3px 6px; 
+}
+#audioEditorPanel #physPanel .row .val {
+ color: #7dd3fc; min-width: 34px; text-align: right; font-size: 11px; 
+}
+#audioEditorPanel #physPanel canvas {
+ width: 100%; height: 120px; background: #0a0d13; border: 1px solid #1c2230; border-radius: 8px; margin-top: 8px; 
+}
+#audioEditorPanel #physPanel .btns {
+ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; 
+}
+#audioEditorPanel #physPanel .btns button {
+
+    background: #16233a; color: #cfe3ff; border: 1px solid #2b4a78; padding: 8px 14px;
+    border-radius: 8px; cursor: pointer; font-size: 13px;
+  
+}
+#audioEditorPanel #physPanel .btns button.primary {
+ background: #14532d; color: #d1fae5; border-color: #1f7a45; 
+}
+#audioEditorPanel #physPanel .btns button:hover {
+ filter: brightness(1.2); 
+}
+#audioEditorPanel #physNote {
+ font-size: 11px; color: #7dd3fc; 
+}
+#audioEditorPanel .edit-overlay {
+ position: absolute; inset: 0; cursor: crosshair; z-index: 5; 
+}
+#audioEditorPanel .edit-overlay.marquee {
+ cursor: crosshair; 
+}
 </style>
 </head>
 <body>
 
 <div id="toolbar">
-  <a class="logo" href="../../index.html" title="点击回到网页导航">⬚ 像素画布</a>
+  <span class="logo" title="像素画布">⬚ 像素画布</span>
   <div class="sep"></div>
   <button class="tool-btn" id="btnSettings" title="打开设置：工具、笔刷/橡皮、颜色、颜色代码、隐藏界面等">⚙</button>
   <button class="tool-btn" id="btnHideUI" title="手动隐藏/显示工具栏与提示（快捷键 H）">🙈</button>
@@ -846,13 +1280,13 @@
   <span class="tool-btn" id="btnOpenQrcode" title="二维码/条码生成器：根据文本在画布生成二维码（QR）或条码（Code 39），可设置颜色">🔳 二维码生成器</span>
   <span class="tool-btn" id="btnOpenTexture" title="纹理生成器：砖墙 / 棋盘格 / 环境 / Gabor / IES / 迷幻 / 噪波 / 天空 / 沃罗诺伊 / 波浪 / 白噪波，可调长宽、偏移、缩放、种子、倍频、颜色">🧱 纹理生成器</span>
   <span class="tool-btn" id="btnOpenPixelator" title="打开图片像素化网站（把图片像素化并导出 PNG）">🖼 图片像素化</span>
-  <span class="tool-btn" id="btnOpenVectorEditor" title="打开无限矢量画图网站（无限画布矢量绘制：矩形 / 三角 / 圆 / 直线，顶点吸附 / 切分 / 测量，v4 矢量工程互通）">✒ 无限矢量画图</span>
 </div>
 
 <!-- 导出工程格式菜单（右键「导出工程」按钮弹出） -->
 <div id="exportFmtMenu" style="display:none; position:fixed; z-index:150; min-width:220px; background:#1a2130; border:1px solid #3a4256; border-radius:10px; padding:6px; box-shadow:0 12px 44px rgba(0,0,0,.6); font-size:13px; color:#e8eaf0;">
   <div style="font-size:11px; color:#8b93a1; padding:4px 8px 6px;">选择导出格式：</div>
   <div class="export-fmt-item" data-fmt="v5" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">v5 全图层<span style="display:block; font-size:11px; color:#7a8494;">每图层独立像素，导入逐层恢复（推荐）</span></div>
+  <div class="export-fmt-item" data-fmt="v4" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">v4 矢量工程<span style="display:block; font-size:11px; color:#7a8494;">与「无限矢量画图」互通：每图层 shapes + 节点对象/实例（无像素）</span></div>
   <div class="export-fmt-item" data-fmt="v3" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">v3 紧凑格式<span style="display:block; font-size:11px; color:#7a8494;">调色板+RLE，可压缩</span></div>
   <div class="export-fmt-item" data-fmt="v2" style="padding:7px 9px; border-radius:7px; cursor:pointer; line-height:1.5;">v2 旧版兼容<span style="display:block; font-size:11px; color:#7a8494;">pixels 明文数组（兼容旧版）</span></div>
 </div>
@@ -1394,6 +1828,7 @@
       <label class="field">导出格式
         <select id="settingsExportFormat" title="导出工程文件的格式">
           <option value="v5" selected>v5 全图层</option>
+          <option value="v4">v4 矢量工程</option>
           <option value="v3">v3 紧凑格式</option>
           <option value="v2">v2 旧版兼容</option>
         </select>
@@ -1503,6 +1938,244 @@
   <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cfd3dc;margin:4px 0">橡皮大小 <input type="range" id="bpEraserSize" min="1" max="32" step="1" value="4" style="flex:1"><span id="bpEraserSizeVal">4</span></label>
   <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cfd3dc;margin:4px 0">颜色 <input type="color" id="bpColor" value="#3b82f6" style="flex:1"></label>
 </div>
+
+<!-- ============ 内嵌音乐编辑器面板（移植自音乐编辑器网站） ============ -->
+
+<div id="musicEditorPanel">
+  <header id="me-toolbar">
+    <span class="brand" title="内嵌音乐编辑器">🎹 音乐编辑器</span>
+    <button id="me-btnPlay" title="播放 / 停止（空格）">▶ 播放</button>
+    <button id="me-btnStop" title="停止并回到开头">⏹ 停止</button>
+    <button id="me-btnNoteSelect" title="框选音符：拖拽框选，右键删除选中的音符（Esc 取消）">⌖ 框选</button>
+    <span class="sep"></span>
+    <span class="field">速度 <input type="number" id="me-bpm" min="40" max="240" step="1" value="120"></span>
+    <input type="range" id="me-bpmRange" min="40" max="240" value="120" title="BPM">
+    <span class="field">音量 <input type="number" id="me-vol" min="0" max="100" step="1" value="80"></span>
+    <input type="range" id="me-volRange" min="0" max="100" value="80">
+    <span class="sep"></span>
+    <span class="field">每小节
+      <select id="me-beatsPerBar">
+        <option value="2">2</option><option value="3">3</option>
+        <option value="4" selected>4</option><option value="6">6</option><option value="8">8</option>
+        <option value="10">10</option><option value="12">12</option><option value="16">16</option>
+      </select>
+    </span>
+    <span class="field">小节数
+      <select id="me-bars">
+        <option value="1">1</option><option value="2" selected>2</option>
+        <option value="3">3</option><option value="4">4</option>
+        <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option>
+      </select>
+    </span>
+    <span class="sep"></span>
+    <span class="field">添加轨道
+      <select id="me-addInstr"></select>
+    </span>
+    <button id="me-btnAddTrack">＋ 添加</button>
+    <span class="sep"></span>
+    <button id="me-btnExportWav" title="把当前循环渲染为 WAV 下载">⬇ 导出 WAV</button>
+    <button id="me-btnExportJson" title="导出工程为 JSON 文件">📄 导出工程</button>
+    <button id="me-btnExportV2" title="把工程编码为像素画 v2 工程：颜色 = 乐器（色相）+ 音符长短（明度），供无限像素画布导入">⬇ 导出像素v2</button>
+    <button id="me-btnImportJson" title="从 JSON 工程文件恢复">📂 导入工程</button>
+    <button id="me-btnClear" title="清空全部轨道">🗑 清空</button>
+    <button id="me-btnImportSound" title="导入声音到节点编辑器声音库（音乐类型节点的「声音A」下拉可直接选择）">🔊 导入声音</button>
+    <button id="me-btnAudioEditor" title="打开音频编辑器（波形 / 频谱 / 滤波 / 降噪等）">🎛 音频编辑器</button>
+    <button id="me-closeBtn" title="关闭音乐编辑器" style="color:#f0a0a0">✕ 关闭</button>
+    <input type="file" id="me-importSoundFile" accept="audio/*,.json,application/json" style="display:none">
+    <input type="file" id="me-importFile" accept=".json" style="display:none">
+    <span id="me-save-info"></span>
+  </header>
+  <main id="me-tracks"></main>
+  <footer id="me-statusbar">
+    <span>步骤 <b id="me-stepInfo">0 / 32</b></span>
+    <span>音符总数 <b id="me-noteCount">0</b></span>
+    <span id="me-autoSaveHint"></span>
+  </footer>
+</div>
+
+<div id="audioEditorPanel">
+
+
+<div class="top-bar">
+  <span class="brand" title="内嵌音频编辑器">🎚 音频编辑器</span>
+  <div class="sep"></div>
+  <button class="t-btn" id="btnImport" title="导入音频（WAV/MP3/OGG/FLAC 等浏览器可解码格式）">📂 导入音频</button>
+  <button class="t-btn" id="btnImportAux" title="导入第二段音频（用于混音 / 卷积）">📂 第二段</button>
+  <button class="t-btn" id="ae-btnImportSound" title="把当前编辑的音频直接导入节点编辑器声音库（音乐类型节点的「声音A」下拉可直接选择）">🔊 导入声音</button>
+  <button class="t-btn" id="btnExport" title="导出为 WAV">⬇ 导出 WAV</button>
+  <div class="sep"></div>
+  <button class="t-btn primary" id="btnPlay" title="播放 / 停止">▶ 播放</button>
+  <button class="t-btn" id="btnStop">⏹ 停止</button>
+  <button class="t-btn" id="btnLoop" title="循环播放（🔁 切换开关）">🔁 循环</button>
+  <button class="t-btn danger" id="ae-btnReset" title="撤销到上一步">↩ 撤销</button>
+  <div class="sep"></div>
+  <button class="t-btn" id="btnResetView" title="回到默认状态：重置各面板视图缩放与布局">↺ 复位</button>
+  <button class="t-btn" id="btnToggleTools" title="隐藏 / 显示右侧控制面板">⤒ 面板</button>
+  <div class="sep"></div>
+  <button class="t-btn" id="btnPhys" title="物理建模合成：Karplus-Strong / 数字波导 / 模态合成——不依赖录音，从物理规则重建乐器发声">🔬 物理建模</button>
+  <div class="sep"></div>
+  <span id="info" style="font-size:12px;color:#9aa0ac;white-space:nowrap">未加载音频</span>
+</div>
+<input type="file" id="ae-fileInput" accept="audio/*,.wav,.mp3,.ogg,.flac,.aac,.m4a">
+<input type="file" id="auxFileInput" accept="audio/*,.wav,.mp3,.ogg,.flac,.aac,.m4a">
+
+<!-- 主区：波形 + 频谱 -->
+<div id="mainArea">
+  <div class="pane" id="pane-wave">
+    <div class="pane-head" title="拖动标题可移动（浮动模式）"><span class="ph-title">🌊 波形（主）</span><button data-act="float" title="浮动 / 停靠">🪟</button><button data-act="close" title="隐藏面板">✕</button></div>
+    <div style="position:relative;flex:1;min-height:0">
+      <canvas id="waveCanvas"></canvas>
+      <div class="edit-overlay" id="waveEditOverlay" style="display:none"></div>
+    </div>
+  </div>
+  <div id="hSplitter" title="拖动调整波形 / 频谱大小"></div>
+  <div class="pane" id="pane-spec">
+    <div class="pane-head" title="拖动标题可移动（浮动模式）"><span class="ph-title">📊 频谱（主）</span><button data-act="float" title="浮动 / 停靠">🪟</button><button data-act="close" title="隐藏面板">✕</button></div>
+    <div style="position:relative;flex:1;min-height:0">
+      <canvas id="specCanvas"></canvas>
+      <div class="edit-overlay" id="specEditOverlay" style="display:none"></div>
+    </div>
+  </div>
+</div>
+<div id="vAreaSplitter" title="拖动调整上方（主区）与下方（时间条区域）面板大小，时间条位置随动"></div>
+
+<!-- 右侧控制面板 -->
+<div id="tools">
+  <div id="toolsHead" title="拖动可移动（浮动模式）">
+    <span class="th-title">🎛 控制面板</span>
+    <button id="btnToolsFloat" title="浮动 / 停靠切换">🪟</button>
+    <button id="btnToolsHide" title="隐藏面板">✕</button>
+  </div>
+  <div id="toolsBody">
+    <div class="tl">🧩 面板管理</div>
+    <div id="panelList"></div>
+
+    <div class="tl">🛠 编辑工具（波形/频谱上直接编辑）</div>
+    <div class="row">
+      <button class="a-btn" data-edit-tool="select" style="flex:1">↖ 选择</button>
+      <button class="a-btn" data-edit-tool="brush" style="flex:1">✏ 笔刷</button>
+      <button class="a-btn" data-edit-tool="eraser" style="flex:1">🧽 橡皮</button>
+      <button class="a-btn" data-edit-tool="marquee" style="flex:1">🔲 框选</button>
+    </div>
+    <div class="row"><label>笔刷值</label><input type="range" id="editAmp" min="0.05" max="1" step="0.05" value="0.6"><span class="val" id="editAmpVal">0.60</span></div>
+    <div class="row"><label>增益</label><input type="range" id="editGain" min="0.5" max="3" step="0.1" value="1.5"><span class="val" id="editGainVal">1.5×</span></div>
+    <div class="row">
+      <button class="a-btn" id="btnMarDel">🗑 删除选中</button>
+      <button class="a-btn" id="btnMarFill">🎨 填充选中</button>
+    </div>
+    <div class="row">
+      <button class="a-btn" id="ae-btnUndo" title="撤销 Ctrl+Z">↩ 撤销</button>
+      <button class="a-btn" id="ae-btnRedo" title="重做 Ctrl+Shift+Z" style="opacity:.5">↪ 重做</button>
+    </div>
+    <div class="out" id="editOut"></div>
+
+    <div class="tl">🎛 时域处理</div>
+    <div class="row"><label>音量</label><input type="range" id="volRange" min="0" max="300" value="100"><span class="val" id="volVal">100%</span><button class="a-btn" id="btnVol">应用</button></div>
+    <div class="row"><label>淡入/淡出</label><input type="range" id="fadeRange" min="0" max="5000" value="1000" step="100"><span class="val" id="fadeVal">1.0s</span><button class="a-btn" id="btnFade">应用</button></div>
+    <div class="row"><label>变速(变调)</label><input type="range" id="speedRange" min="20" max="300" value="100"><span class="val" id="speedVal">1.00x</span><button class="a-btn" id="btnSpeed">应用</button></div>
+    <div class="row"><label>采样率</label><select id="sampleRateSel" class="a-btn">
+      <option value="8000">8000</option><option value="11025">11025</option><option value="16000">16000</option>
+      <option value="22050">22050</option><option value="32000">32000</option><option value="44100" selected>44100</option>
+      <option value="48000">48000</option><option value="96000">96000</option>
+    </select><button class="a-btn primary" id="btnResample" title="按新采样率重采样：采样率越高采样点越多">应用</button></div>
+    <div class="row"><button class="a-btn" id="btnReverse">↔ 反转（倒放）</button><button class="a-btn" id="btnNormalize">⚖ 归一化</button><button class="a-btn" id="btnMix">⊕ 混入第二段</button></div>
+
+    <div class="tl">📊 傅里叶分析（FFT）</div>
+    <div class="row"><label>窗口大小</label><select id="fftSize" class="a-btn">
+      <option value="1024">1024</option><option value="2048" selected>2048</option>
+      <option value="4096">4096</option><option value="8192">8192</option>
+    </select><button class="a-btn primary" id="btnFFT">频谱分析</button></div>
+    <div class="row"><label>基频检测</label><button class="a-btn" id="btnPitch">自相关测基频</button></div>
+    <div class="out" id="fftOut"></div>
+
+    <div class="tl">🎛 频域滤波（FFT 频域乘法）</div>
+    <div class="row"><label>低通 Hz</label><input type="number" id="lpFreq" value="3000"><button class="a-btn" id="btnLP">低通</button></div>
+    <div class="row"><label>高通 Hz</label><input type="number" id="hpFreq" value="200"><button class="a-btn" id="btnHP">高通</button></div>
+    <div class="row"><label>带通</label><input type="number" id="bpLo" value="300" style="width:56px"><input type="number" id="bpHi" value="3000" style="width:56px"><button class="a-btn" id="btnBP">带通</button></div>
+
+    <div class="tl">🔁 卷积（时域卷积 = 频域乘积）</div>
+    <div class="row"><label>脉冲响应</label><button class="a-btn" id="btnIR1">🔊 简单混响</button><button class="a-btn" id="btnIR2">⚡ 短促回声</button></div>
+    <div class="row"><button class="a-btn primary" id="btnConv">⊛ 卷积（用第二段）</button></div>
+
+    <div class="tl">📈 概率统计</div>
+    <div class="row"><label>噪声门</label><input type="range" id="gateRange" min="0" max="200" value="10"><span class="val" id="gateVal">10%</span><button class="a-btn" id="btnGate">应用</button></div>
+    <div class="row"><button class="a-btn" id="btnDenoise">🌫 频谱减法降噪（高斯噪声估计）</button></div>
+    <div class="out" id="statOut"></div>
+
+    <div class="tl">🧩 矩阵分解（NMF 源分离）</div>
+    <div class="row"><label>成分数</label><select id="nmfK" class="a-btn"><option value="2" selected>2</option><option value="3">3</option></select>
+    <button class="a-btn primary" id="btnNMF">分解并分离</button></div>
+    <div class="out" id="nmfOut"></div>
+  </div>
+</div>
+<div id="vSplitter" title="拖动调整面板宽度"></div>
+<button id="btnToolsShow" style="display:none" title="显示控制面板">🛠 显示工具栏</button>
+
+<!-- 底部：进度条 + 分析区（波形 / 频谱 / 时频图） -->
+<div id="bottomArea">
+  <div id="progressWrap">
+    <span class="pt" id="timeCur">0:00.0</span>
+    <input type="range" id="progressBar" min="0" max="1000" value="0">
+    <span class="pt" id="timeTot">0:00.0</span>
+  </div>
+  <div id="analyzeWrap">
+    <div class="pane" id="pane-mWave">
+      <div class="pane-head" title="拖动标题可移动（浮动模式）"><span class="ph-title" id="mWaveTitle">🌊 波形（当前时间）</span><button data-act="float" title="浮动 / 停靠">🪟</button><button data-act="close" title="隐藏面板">✕</button></div>
+      <canvas id="miniWave"></canvas>
+    </div>
+    <div class="ana-splitter" id="anaSplit1" title="拖动调整面板大小"></div>
+    <div class="pane" id="pane-mSpec">
+      <div class="pane-head" title="拖动标题可移动（浮动模式）"><span class="ph-title">📊 频谱（当前帧 FFT）</span><button data-act="float" title="浮动 / 停靠">🪟</button><button data-act="close" title="隐藏面板">✕</button></div>
+      <canvas id="miniSpec"></canvas>
+    </div>
+    <div class="ana-splitter" id="anaSplit2" title="拖动调整面板大小"></div>
+    <div class="pane" id="pane-mSTFT">
+      <div class="pane-head" title="拖动标题可移动（浮动模式）"><span class="ph-title">🎨 时频图（STFT · 黄线=当前时间）</span><button data-act="float" title="浮动 / 停靠">🪟</button><button data-act="close" title="隐藏面板">✕</button></div>
+      <canvas id="miniSTFT"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- 物理建模合成面板 -->
+<div id="physOverlay" style="display:none">
+  <div id="physPanel">
+    <h2>🔬 物理建模合成 <span class="close" id="physClose" title="关闭">✕</span></h2>
+    <div class="desc">不依赖任何录音，用数学公式重建乐器的物理发声过程：<b>激励器</b>（琴槌/弓/手指的激发）+ <b>共鸣器</b>（琴弦/鼓膜/琴身的振动传播）。实现：<b>Karplus-Strong 数字波导</b>（拨弦/击弦/拉弦）、<b>模态合成</b>（鼓/铃/金属）、<b>共振峰+模态</b>（人声/吹奏）。</div>
+    <div class="tl">🎼 乐器（合成算法）</div>
+    <div class="row">
+      <label>类型</label>
+      <select id="physType">
+        <option value="pluck">🎸 吉他拨弦（Karplus-Strong）</option>
+        <option value="piano">🎹 钢琴击弦（多弦 + 音板共鸣）</option>
+        <option value="bow">🎻 小提琴拉弦（持续弓激励）</option>
+        <option value="drum">🥁 鼓（圆膜模态合成）</option>
+        <option value="bell">🔔 铃/金属（非谐模态）</option>
+        <option value="voice">🗣 人声/吹奏（共振峰 + 模态）</option>
+      </select>
+    </div>
+    <div class="tl">🎛 物理参数（激励器 + 共鸣器）</div>
+    <div class="row"><label>频率 Hz</label><input type="range" id="physFreq" min="40" max="1200" value="220"><span class="val" id="physFreqVal">220</span><span id="physNote"></span></div>
+    <div class="row"><label>时长 s</label><input type="range" id="physDur" min="0.5" max="8" step="0.1" value="2"><span class="val" id="physDurVal">2.0s</span></div>
+    <div class="row"><label>激励强度</label><input type="range" id="physStr" min="0.1" max="2" step="0.05" value="1"><span class="val" id="physStrVal">1.00</span></div>
+    <div class="row" id="rowDamp"><label>阻尼/衰减</label><input type="range" id="physDamp" min="0.90" max="0.999" step="0.001" value="0.985"><span class="val" id="physDampVal">0.985</span></div>
+    <div class="row" id="rowModes"><label>模态数</label><input type="range" id="physModes" min="2" max="12" step="1" value="5"><span class="val" id="physModesVal">5</span></div>
+    <div class="row" id="rowBows"><label>弓压/弓速</label><input type="range" id="physBow" min="0.1" max="2" step="0.05" value="0.8"><span class="val" id="physBowVal">0.80</span></div>
+    <div class="row" id="rowDetune"><label>失谐 cents</label><input type="range" id="physDetune" min="0" max="50" step="1" value="8"><span class="val" id="physDetuneVal">8¢</span></div>
+    <div class="tl">📉 结果预览</div>
+    <canvas id="physCanvas"></canvas>
+    <div class="btns">
+      <button id="physGen">🎲 随机参数</button>
+      <button id="physPlay">▶ 生成并试听</button>
+      <button class="primary" id="physLoad">⬇ 载入音频编辑器</button>
+      <button id="physExport">💾 导出 WAV</button>
+    </div>
+  </div>
+</div>
+
+
+<button id="ae-closeBtn" title="关闭音频编辑器" style="position:fixed;right:12px;top:8px;z-index:60;background:rgba(220,60,60,.9);color:#fff;border:none;border-radius:7px;padding:5px 12px;cursor:pointer;font-size:13px">✕ 关闭</button>
+</div>
+
 <script src="image-codecs.js"></script>
 <script src="pixel-canvas.js"></script>
 <script src="texture.js"></script>
@@ -1510,7 +2183,12 @@
 <script src="node-system.js"></script>
 <script src="node-ther.js"></script>
 <script src="vector-canvas.js"></script>
+<script src="vector-shapes.js"></script>
+<script src="music-editor.js"></script>
+<script src="audio-editor.js"></script>
 
+
+<!-- ============ 内嵌音频编辑器面板（移植自音频编辑器网站） ============ -->
 </body>
 </html>
 

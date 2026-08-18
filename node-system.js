@@ -1723,8 +1723,16 @@ function extractRegion(li, x0, y0, x1, y1) {
 }
 function buildObjectCanvas(obj) {
   const c = document.createElement('canvas');
-  c.width = obj.w; c.height = obj.h;
+  c.width = Math.max(1, obj.w || 1); c.height = Math.max(1, obj.h || 1);
   const cc = c.getContext('2d');
+  // 矢量对象（obj.shape，来自框选矢量形状）：用矢量绘制函数画到对象画布（相对 bbox 平移）
+  if (obj.shape) {
+    cc.translate(-(obj.srcX || 0), -(obj.srcY || 0));
+    if (typeof vsDrawShape === 'function') vsDrawShape(cc, obj.shape, 1);
+    else if (typeof drawShapeOnCtx === 'function') drawShapeOnCtx(cc, obj.shape);
+    cc.setTransform(1, 0, 0, 1, 0, 0);
+    return c;
+  }
   for (const [key, col] of obj.pixels) {
     const i = key.indexOf(',');
     cc.fillStyle = col;
@@ -1743,35 +1751,70 @@ function createObject(obj) {
   requestRender();
 }
 
-// 「框选添加节点」松手：剪切活动图层框选区域的像素 → 对象模板（可撤销）
+// 「框选添加节点」松手：剪切活动图层框选区域的像素 / 矢量形状 → 对象模板
 function commitNodeSelect() {
   if (!nodeSelStart || !nodeSelEnd) return;
   const x0 = Math.min(nodeSelStart.x, nodeSelEnd.x), y0 = Math.min(nodeSelStart.y, nodeSelEnd.y);
   const x1 = Math.max(nodeSelStart.x, nodeSelEnd.x), y1 = Math.max(nodeSelStart.y, nodeSelEnd.y);
   const li = state.activeLayer;
+  const L0 = state.layers[li];
+  // 框选区域内的矢量形状（与框选矩形相交，按 bbox 判断）
+  let shapesIn = [];
+  if (L0 && Array.isArray(L0.shapes) && L0.shapes.length && typeof vsShapeBBox === 'function') {
+    shapesIn = L0.shapes.filter(function (sh) {
+      const b = vsShapeBBox(sh);
+      return b && isFinite(b[0]) && b[2] >= x0 && b[0] <= x1 && b[3] >= y0 && b[1] <= y1;
+    });
+  }
   const reg = extractRegion(li, x0, y0, x1, y1);
-  if (!reg) { alert('框选区域内没有像素。'); return; }
-  // 剪切：框选区域内所有「显示像素」清除（图片模式 = 挖洞，普通图层 = 删除）
-  beginStroke();
-  for (let y = y0; y <= y1; y++)
-    for (let x = x0; x <= x1; x++) {
-      if (displayColor(state.layers[li], x, y)) paintCellRaw(x + ',' + y, null);
-    }
-  endStroke();
-  markDirtyRect(x0, y0, x1, y1, li);
+  if (!reg && !shapesIn.length) { alert('框选区域内没有像素或矢量形状。'); return; }
+  // 剪切像素：仅当框选区域「没有矢量形状」时才执行（避免把形状区域挖洞导致形状消失）
+  if (reg && !shapesIn.length) {
+    beginStroke();
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++) {
+        if (displayColor(state.layers[li], x, y)) paintCellRaw(x + ',' + y, null);
+      }
+    endStroke();
+    markDirtyRect(x0, y0, x1, y1, li);
+  }
   const oid = nextObjId++;
   const idx = state.objects.length; // 新对象将 push 到末尾
-  createObject({
-    id: oid, name: '对象 ' + oid,
-    kind: 'selection', srcLayer: li,
-    w: reg.w, h: reg.h, srcX: reg.ox, srcY: reg.oy,
-    pixels: reg.pixels,
-  });
+  if (reg) {
+    createObject({
+      id: oid, name: '对象 ' + oid,
+      kind: 'selection', srcLayer: li,
+      w: reg.w, h: reg.h, srcX: reg.ox, srcY: reg.oy,
+      pixels: reg.pixels,
+    });
+  }
+  // 框选区域内的矢量形状 → 每个形状一个矢量对象（保留形状几何，可实例化为矢量形状）
+  let firstVecIdx = -1;
+  if (shapesIn.length) {
+    for (const sh of shapesIn) {
+      const bb = vsShapeBBox(sh);
+      if (!bb || !isFinite(bb[0])) continue;
+      const vobj = {
+        id: nextObjId++, name: (sh.name || '形状 ') + nextObjId,
+        kind: 'shape', srcLayer: li,
+        srcX: bb[0], srcY: bb[1],
+        w: Math.max(1, bb[2] - bb[0] + 1), h: Math.max(1, bb[3] - bb[1] + 1),
+        shape: JSON.parse(JSON.stringify(sh)),
+        pixels: new Map(),
+        vars: [], arrs: [],
+        graph: { nodes: [{ id: nextNodeId++, type: 'whenStart', p: {}, x: 30, y: 30 }], conns: [], flows: [] },
+      };
+      if (firstVecIdx < 0) firstVecIdx = state.objects.length;
+      state.objects.push(vobj);
+      objCanvases.set(vobj.id, buildObjectCanvas(vobj));
+    }
+  }
   fillNodeCatSelect();
   window.__nodeEditorOpen = true;
   els.nodePanel.classList.add('open');
   raiseSidePanel(els.nodePanel);
-  selectObject(idx); // 自动选中新对象，方便直接加节点 / 建变量 / 实例化
+  // 自动选中新对象：优先选中矢量对象（实例化出矢量图形），否则选中像素对象
+  selectObject(firstVecIdx >= 0 ? firstVecIdx : idx);
   requestRender();
 }
 
@@ -1789,13 +1832,32 @@ function createObjectFromLayer(li) {
     return;
   }
   const reg = extractRegion(li, -Infinity, -Infinity, Infinity, Infinity);
-  if (!reg) { alert('该图层没有像素内容。'); return; }
-  createObject({
-    id: nextObjId++, name: state.layers[li].name,
-    kind: 'layer', srcLayer: li,
-    w: reg.w, h: reg.h, srcX: reg.ox, srcY: reg.oy,
-    pixels: reg.pixels,
-  });
+  if (!reg && !(state.layers[li].shapes && state.layers[li].shapes.length)) { alert('该图层没有像素内容或矢量形状。'); return; }
+  if (reg) {
+    createObject({
+      id: nextObjId++, name: state.layers[li].name,
+      kind: 'layer', srcLayer: li,
+      w: reg.w, h: reg.h, srcX: reg.ox, srcY: reg.oy,
+      pixels: reg.pixels,
+    });
+  }
+  // 图层内的矢量形状 → 每个形状一个矢量对象
+  if (state.layers[li].shapes && state.layers[li].shapes.length && typeof vsShapeBBox === 'function') {
+    for (const sh of state.layers[li].shapes) {
+      const bb = vsShapeBBox(sh);
+      if (!bb || !isFinite(bb[0])) continue;
+      state.objects.push({
+        id: nextObjId++, name: (sh.name || '形状 ') + nextObjId,
+        kind: 'shape', srcLayer: li,
+        srcX: bb[0], srcY: bb[1],
+        w: Math.max(1, bb[2] - bb[0] + 1), h: Math.max(1, bb[3] - bb[1] + 1),
+        shape: JSON.parse(JSON.stringify(sh)),
+        pixels: new Map(),
+        vars: [], arrs: [],
+        graph: { nodes: [{ id: nextNodeId++, type: 'whenStart', p: {}, x: 30, y: 30 }], conns: [], flows: [] },
+      });
+    }
+  }
   selObjIdx = state.objects.length - 1;
   fillNodeCatSelect();
   window.__nodeEditorOpen = true;
@@ -1882,10 +1944,18 @@ function drawInstances(p, li) {
     if (!state.layers[ili] || !state.layers[ili].visible) continue; // 隐藏图层的实例不渲染
     const obj = state.objects[inst.objectIdx];
     if (!obj) continue;
-    let img = objCanvases.get(obj.id);
-    if (!img) { img = buildObjectCanvas(obj); objCanvases.set(obj.id, img); }
     const ix = Math.round(inst.x), iy = Math.round(inst.y);
-    ctx.drawImage(img, ix, iy);
+    if (obj.shape && typeof vsDrawShape === 'function') {
+      // 矢量对象：直接矢量渲染（世界坐标变换下），缩放保持清晰
+      ctx.save();
+      ctx.translate(inst.x - (obj.srcX || 0), inst.y - (obj.srcY || 0));
+      vsDrawShape(ctx, obj.shape, s);
+      ctx.restore();
+    } else {
+      let img = objCanvases.get(obj.id);
+      if (!img) { img = buildObjectCanvas(obj); objCanvases.set(obj.id, img); }
+      ctx.drawImage(img, ix, iy);
+    }
     if (inst.id === selInstId) { // 选中高亮框
       ctx.strokeStyle = 'rgba(30, 200, 120, .95)';
       ctx.lineWidth = 1.5 / s;
@@ -4558,8 +4628,11 @@ if (soundFileInput) soundFileInput.addEventListener('change', function () {
   }
   soundFileInput.value = '';
 });
-// 音乐编辑器快捷按钮：新标签页打开（相对路径：无限像素画布上一级目录的 音乐编辑器/）
-function openMusicEditor() { window.open('../音乐编辑器/音乐编辑器.html', '_blank'); }
+// 音乐编辑器快捷按钮：打开内嵌音乐编辑器面板（music-editor.js，不再跳转外部网站）
+function openMusicEditor() {
+  if (typeof window.__meOpen === 'function') window.__meOpen();
+  else window.open('../音乐编辑器/音乐编辑器.html', '_blank'); // 兜底（面板未初始化时）
+}
 if (btnMusicEditor) btnMusicEditor.addEventListener('click', openMusicEditor);
 if (scratchBtnMusicEditor) scratchBtnMusicEditor.addEventListener('click', openMusicEditor);
 

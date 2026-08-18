@@ -200,6 +200,7 @@
   function endStroke() {
     if (currentStroke && currentStroke.size > 0) {
       undoStack.push(Array.from(currentStroke.values()));
+      window.__vsLastEdit = 'pixel'; // 撤销分派：最近操作类型（vector-shapes.js 统一分派撤销）
       if (undoStack.length > state.maxUndoSteps) undoStack.shift();
       redoStack.length = 0;
       updateUndoUI();
@@ -384,6 +385,7 @@
   //   · 放大超过阈值后后台渐进栅格化，栅格化完成才显示像素格子；
   //   · 图层一旦被编辑（画 / 填充 / 撤销重做等），原图失效，退回纯像素模式。
   const IMG_LOD_THRESHOLD = 1;   // 缩放 ≥ 该值（1 格 ≥ 1px）显示像素格子；否则显示原图
+  const IMG_RASTER_THRESHOLD = 2000000; // 图片像素数超过该值才用「图片模式图层(LOD)」；小图直接栅格化为像素（原导入方式）
   const srcImages = new Map();   // 图层对象 -> { img, w, h, ox, oy, job, done, canvas, ctx, data }
   function layerCache(i) {
     if (!layerChunks[i]) layerChunks[i] = { map: new Map(), dirty: new Set() };
@@ -517,12 +519,14 @@
         // 图片 LOD：原图模式 —— 一次 drawImage 渲染整张图，彻底绕过像素 Map 遍历 + overlay 合成
         ctx.drawImage(si.img, si.ox, si.oy, si.w, si.h);
         drawImageOverlay(ctx, li);
+        if (typeof window.__vshapeLayer === 'function') window.__vshapeLayer(p, li);
         drawInstances(p, li);
         continue;
       }
       const snap = ensureViewSnap(li, gx0, gy0, gx1, gy1);
       if (buildViewSnapSlice(snap)) pending = true;
       if (snap.ready || snap.cv.width) ctx.drawImage(snap.cv, snap.px, snap.py, snap.pw, snap.ph);
+      if (typeof window.__vshapeLayer === 'function') window.__vshapeLayer(p, li);
       drawInstances(p, li);
     }
     // 笔画进行中：快照延迟重建，把本次笔画的新格子按屏幕坐标直接叠加绘制（至少 1px，保证可见）
@@ -689,6 +693,7 @@
     drawNodeSelPreview(p);
     drawSelMovePreview(p);
     drawVarMonitors(p); // 变量监控（node-system.js：「显示变量A」在画布/舞台上可视化变量）
+    if (typeof window.__vshapeOverlay === 'function') window.__vshapeOverlay(p); // 矢量工具绘制预览（vector-shapes.js）
   }
 
   function drawChunks(gx0, gx1, gy0, gy1, p) {
@@ -741,6 +746,7 @@
         ctx.drawImage(si.img, si.ox, si.oy, si.w, si.h);
         ctx.imageSmoothingEnabled = wasSmooth;
         drawImageOverlay(ctx, li);
+        if (typeof window.__vshapeLayer === 'function') window.__vshapeLayer(p, li);
         drawInstances(p, li);
         continue;
       }
@@ -750,6 +756,7 @@
           const chunk = c.map.get(cx + ',' + cy);
           if (chunk) ctx.drawImage(chunk, cx * CHUNK, cy * CHUNK);
         }
+      if (typeof window.__vshapeLayer === 'function') window.__vshapeLayer(p, li);
       drawInstances(p, li); // 该图层的实例紧跟像素，参与图层遮挡
     }
     // 本帧预算内没重建完的块：下一帧继续（渐进渲染）
@@ -934,10 +941,12 @@
   let panState = null, drawState = null, pinchState = null, dragInst = null;
 
   function syncToolUI() {
-    const t = state.tool;
+    // 矢量绘制工具激活时：像素工具栏所有工具不高亮（互斥显示，vector-shapes.js）
+    const drawActive = typeof window.__vshapeIsDrawActive === 'function' && window.__vshapeIsDrawActive();
+    const t = drawActive ? '' : state.tool;
     els.rToolBrush.classList.toggle('active', t === 'brush' || t === 'eraser');
-    els.rToolBrush.textContent = t === 'eraser' ? '🧹' : '🖌';
-    els.rToolBrush.title = t === 'eraser' ? '橡皮（左键使用，右键选择）' : '画笔（左键使用，右键选择）';
+    els.rToolBrush.textContent = (drawActive ? '' : t) === 'eraser' ? '🧹' : '🖌';
+    els.rToolBrush.title = (drawActive ? '' : t) === 'eraser' ? '橡皮（左键使用，右键选择）' : '画笔（左键使用，右键选择）';
     els.settingsTool.value = t;
     els.btnOpenPicker.classList.toggle('active', t === 'picker');
     const isShape = t === 'rect' || t === 'circle' || t === 'triangle' || t === 'fill';
@@ -976,6 +985,12 @@
   }
 
   function setTool(t) {
+    // 切换到像素工具：退出矢量模式（vector-shapes.js）。
+    // 移动/框选/nodeSelect（框选添加对象）：保持矢量模式但清空矢量绘制工具
+    if (typeof window.__vshapePixelTool === 'function' || typeof window.__vshapeClearTool === 'function') {
+      if (t === 'move' || t === 'sel' || t === 'nodeSelect') { if (typeof window.__vshapeClearTool === 'function') window.__vshapeClearTool(); }
+      else if (typeof window.__vshapePixelTool === 'function') window.__vshapePixelTool();
+    }
     state.tool = t;
     // 切换工具时清除「框选移动」区域（move 手掌拖动 / moveSel 重新框选时保留）
     if (t !== 'move' && t !== 'sel') { selMoveStart = null; selMoveEnd = null; dragSelMove = null; }
@@ -1434,6 +1449,8 @@
   }
 
   canvas.addEventListener('pointerdown', function (e) {
+    // 矢量工具（vector-shapes.js）：命中矢量逻辑时拦截像素操作
+    if (typeof window.__vshapeDown === 'function' && window.__vshapeDown(e)) return;
     canvas.focus();
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* 未激活指针（测试等）时忽略 */ }
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType, button: e.button });
@@ -1544,6 +1561,8 @@
   canvas.addEventListener('pointermove', function (e) {
     state.mouseOnCanvas = true;
     state.mouseX = e.clientX; state.mouseY = e.clientY;
+    // 矢量工具（vector-shapes.js）：拖动形状/顶点/绘制预览
+    if (typeof window.__vshapeMove === 'function' && window.__vshapeMove(e)) return;
     const g2 = screenToGrid(e.clientX, e.clientY);
     state.mouseGridX = g2[0]; state.mouseGridY = g2[1];
     const p = pointers.get(e.pointerId);
@@ -1634,6 +1653,8 @@
   });
 
   function endPointer(e) {
+    // 矢量工具（vector-shapes.js）：结束形状/拖动/顶点操作
+    if (typeof window.__vshapeUp === 'function' && window.__vshapeUp(e)) return;
     pointers.delete(e.pointerId);
     if (pointers.size < 2) pinchState = null;
     if (pointers.size === 0) {
@@ -1645,7 +1666,7 @@
         if (drawState.shape) commitShape();
         else if (drawState.stats) computeStats();
         else if (drawState.nodeSel) commitNodeSelect();
-        else if (drawState.selMove) { openSelectPanel(); }
+        else if (drawState.selMove) { if (typeof window.__vshapeSelDone === 'function') window.__vshapeSelDone(); openSelectPanel(); } // 框选完成后：选中框内矢量形状（vector-shapes.js）
         else endStroke();
         drawState = null;
       } else if (selMoveStart && selMoveEnd) {
@@ -1675,6 +1696,8 @@
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
   window.addEventListener('keydown', function (e) {
+    // 矢量工具（vector-shapes.js）：形状撤销/重做优先、V 切工具、Delete 删形状
+    if (typeof window.__vshapeKey === 'function' && window.__vshapeKey(e)) return;
     if (e.code === 'Space') { spaceHeld = true; e.preventDefault(); canvas.classList.add('space'); }
     // 撤销 / 重做（不受弹窗影响，但弹窗中避免误触输入框）
     const tag = (e.target && e.target.tagName) || '';
@@ -2532,6 +2555,31 @@
   // 导出工程：v3 紧凑格式（调色板 + RLE，类似 pig2.json，可选压缩）
   // 或 v2 旧版兼容格式（pixels 明文数组，类似 pig.json），由设置面板「导出格式」决定
   // 或 v5 全图层格式（每图层独立 pixels 数组，导入可逐层恢复，不损失各图层像素）
+  // ---- v4 矢量工程（与「无限矢量画图」互通）形状序列化 / 反序列化 ----
+  let v4ShapeSeq = 0;
+  function v4SerializeShape(sh) {
+    const o = { type: sh.type, stroke: sh.stroke, sw: sh.sw, fill: sh.fill || '' };
+    if (sh.name) o.name = sh.name;
+    if (sh.x !== undefined) { o.x = sh.x; o.y = sh.y; o.w = sh.w; o.h = sh.h; }
+    if (sh.cx !== undefined) { o.cx = sh.cx; o.cy = sh.cy; o.rx = sh.rx; o.ry = sh.ry; if (sh.r !== undefined) o.r = sh.r; }
+    if (sh.x1 !== undefined) { o.x1 = sh.x1; o.y1 = sh.y1; o.x2 = sh.x2; o.y2 = sh.y2; }
+    if (sh.pts) { o.pts = sh.pts.map(function (p) { return p.slice(); }); o.closed = !!sh.closed; if (sh.breaks) o.breaks = sh.breaks.slice(); if (sh.fillRule) o.fillRule = sh.fillRule; }
+    if (sh.segs) { o.segs = sh.segs.map(function (s) { return [s[0].slice(), s[1].slice()]; }); }
+    return o;
+  }
+  function v4DeserializeShape(o) {
+    v4ShapeSeq++;
+    // stroke：保留 ''（无描边）状态，仅缺失时回退默认
+    const sh = { id: v4ShapeSeq, type: o.type, stroke: (o.stroke === undefined || o.stroke === null) ? '#3b82f6' : o.stroke, sw: o.sw || 2, fill: o.fill || '' };
+    if (o.name) sh.name = o.name;
+    if (o.x !== undefined) { sh.x = o.x; sh.y = o.y; sh.w = o.w; sh.h = o.h; }
+    if (o.cx !== undefined) { sh.cx = o.cx; sh.cy = o.cy; sh.rx = o.rx; sh.ry = o.ry; if (o.r !== undefined) sh.r = o.r; }
+    if (o.x1 !== undefined) { sh.x1 = o.x1; sh.y1 = o.y1; sh.x2 = o.x2; sh.y2 = o.y2; }
+    if (o.pts) { sh.pts = o.pts.map(function (p) { return [p[0], p[1]]; }); sh.closed = !!o.closed; if (Array.isArray(o.breaks)) sh.breaks = o.breaks.slice(); if (o.fillRule) sh.fillRule = o.fillRule; }
+    if (o.segs) { sh.segs = o.segs.map(function (s) { return [[s[0][0], s[0][1]], [s[1][0], s[1][1]]]; }); }
+    return sh;
+  }
+
   async function exportProject() {
     // 图片 LOD 原图模式图层：导出前合并 原图⊕overlay 写入 Map；导出完成后恢复 overlay-only
     const imgLayers = [];
@@ -2543,7 +2591,7 @@
         alert('画布是空的，没有内容可导出。'); return;
       }
       const fmt = state.exportFormat;
-      const tag = (fmt === 'v2' || fmt === 'v5') ? fmt : 'v3';
+      const tag = (fmt === 'v2' || fmt === 'v5' || fmt === 'v4') ? fmt : 'v3';
       const name = 'pixel-project-' + ts() + '-' + tag + '.json';
       const objects = state.objects.map(serializeObject);
       const instances = state.instances.map(serializeInstance);
@@ -2562,8 +2610,22 @@
       requestRender();
     }
   }
-  // 导出主体（v2/v3/v5），从 exportProject 抽出以便 finally 恢复 overlay-only
+  // 导出主体（v2/v3/v4/v5），从 exportProject 抽出以便 finally 恢复 overlay-only
   async function exportProjectBody(fmt, tag, name, objects, instances) {
+
+    // v4 矢量工程格式（与「无限矢量画图」互通）：每图层 shapes + 节点对象/实例（无像素）
+    if (fmt === 'v4') {
+      const layersV4 = state.layers.map(function (L) {
+        return { name: L.name, visible: L.visible !== false, shapes: (L.shapes || []).map(v4SerializeShape) };
+      });
+      const out = {
+        app: 'vector-canvas', version: 4,
+        layers: layersV4,
+        objects: objects, instances: instances,
+      };
+      downloadBlob(new Blob([JSON.stringify(out, null, 2)]), name);
+      return;
+    }
 
     // v5 全图层格式：每图层独立的 pixels 明文数组（[[x,y,color],...]），含隐藏图层；
     // 导入时逐层恢复，不合并、不损失各图层像素（shapes 矢量对象也按图层保留）
@@ -2632,6 +2694,7 @@
     return {
       id: o.id, name: o.name, kind: o.kind, srcLayer: o.srcLayer,
       w: o.w, h: o.h, srcX: o.srcX, srcY: o.srcY,
+      shape: o.shape || null, shapeId: o.shapeId,
       pixels: Array.from((o.pixels || new Map()).entries()),
       vars: o.vars || [],
       graph: o.graph || { nodes: [], conns: [], flows: [] },
@@ -2651,6 +2714,7 @@
         const o = {
           id: ro.id, name: ro.name || ('对象 ' + ro.id), kind: ro.kind || 'selection',
           srcLayer: ro.srcLayer, w: ro.w, h: ro.h, srcX: ro.srcX, srcY: ro.srcY,
+          shape: ro.shape || null, shapeId: ro.shapeId,
           pixels: new Map(Array.isArray(ro.pixels) ? ro.pixels : []),
           vars: Array.isArray(ro.vars) ? ro.vars : [],
           graph: ro.graph || { nodes: [], conns: [], flows: [] },
@@ -2707,6 +2771,12 @@
             layers = raw.layers; shapes = raw.shapes;
             objects = raw.objects; instances = raw.instances;
             extra = collectExtra(raw);
+          } else if (raw && raw.app === 'vector-canvas' && raw.version === 4) {
+            // v4 矢量工程（与「无限矢量画图」互通）：shapes 按图层恢复，无像素内容
+            v4ShapeSeq = 0;
+            layers = (Array.isArray(raw.layers) && raw.layers.length) ? raw.layers : [{ name: '图层 1', visible: true, shapes: Array.isArray(raw.shapes) ? raw.shapes : [] }];
+            objects = raw.objects; instances = raw.instances;
+            extra = collectExtra(raw);
           } else {
             throw new Error('不是有效的工程文件');
           }
@@ -2746,6 +2816,19 @@
             requestRender();
             alert('导入成功：' + msg);
           };
+          // 优先：v4 矢量工程（每层 shapes，无 pixels/rows）
+          if (Array.isArray(layers) && layers.length && layers[0] && Array.isArray(layers[0].shapes) && !Array.isArray(layers[0].pixels) && !Array.isArray(layers[0].rows)) {
+            const newLayers = layers.map(function (l, i) {
+              return {
+                name: l.name || '图层 ' + (i + 1),
+                visible: l.visible !== false,
+                pixels: new Map(),
+                shapes: (Array.isArray(l.shapes) ? l.shapes : []).map(function (o) { return v4DeserializeShape(o); }),
+              };
+            });
+            finish(newLayers, 'v4 矢量工程：' + newLayers.length + ' 个图层。');
+            return;
+          }
           // 优先：v5 全图层格式（每层独立的 pixels 明文数组 [[x,y,color],...]，含隐藏图层）
           if (Array.isArray(layers) && layers.length && layers[0] && Array.isArray(layers[0].pixels)) {
             const newLayers = layers.map(function (l, i) {
@@ -3370,6 +3453,11 @@
   }
 
   function importImage(file) {
+    // SVG 矢量导入（vector-shapes.js）：直接解析为矢量形状，不走位图栅格化
+    if (/\.svg$/i.test(file.name || '') && typeof window.__vshapeImportSVG === 'function') {
+      window.__vshapeImportSVG(file);
+      return;
+    }
     // GIF / APNG 动图：逐帧解码 → 每帧一个图层
     const reader = new FileReader();
     reader.onload = function () {
@@ -3398,11 +3486,28 @@
     }
     const [wx, wy] = screenToWorld(cssW() / 2, cssH() / 2);
     const ox = Math.floor(wx), oy = Math.floor(wy);
-    // 每个帧 → 一个图层（图片 LOD：保留帧位图，延迟栅格化，缩小直接预览整帧）
+    // 每个帧 → 一个图层（大帧用图片 LOD 保留位图；小帧直接栅格化为像素，原导入方式）
     const newLayers = frames.map(function (f, idx) {
       const base = name ? name.replace(/\.[^.]+$/, '') : '图片';
       const L = { name: (frames.length > 1 ? base + '·帧' + (idx + 1) : base), visible: true, pixels: new Map(), shapes: [] };
-      srcImages.set(L, { img: f.canvas, w: f.canvas.width, h: f.canvas.height, ox: ox, oy: oy, base: null, baseHex: null, baseBusy: false, bbox: null, overlay: null, overlayDirty: false });
+      const fw = f.canvas.width, fh = f.canvas.height;
+      if (fw * fh > IMG_RASTER_THRESHOLD) {
+        srcImages.set(L, { img: f.canvas, w: fw, h: fh, ox: ox, oy: oy, base: null, baseHex: null, baseBusy: false, bbox: null, overlay: null, overlayDirty: false });
+      } else {
+        // 小帧：立即栅格化（透明像素跳过）
+        const c = f.canvas;
+        const cx = c.getContext('2d');
+        const data = cx.getImageData(0, 0, fw, fh).data;
+        for (let y = 0; y < fh; y++) {
+          const rowOff = y * fw;
+          for (let x = 0; x < fw; x++) {
+            const i = (rowOff + x) * 4;
+            const a = data[i + 3];
+            if (a === 0) continue;
+            L.pixels.set((ox + x) + ',' + (oy + y), rgbaToHex(data[i], data[i + 1], data[i + 2], a));
+          }
+        }
+      }
       return L;
     });
     // 替换当前所有图层为动图帧
@@ -3440,13 +3545,13 @@
       const [wx, wy] = screenToWorld(cssW() / 2, cssH() / 2);
       const ox = Math.floor(wx), oy = Math.floor(wy);
       const L = state.layers[state.activeLayer];
-      if (L.pixels.size === 0) {
-        // 空图层：进入图片 LOD 原图模式 —— 不栅格化，缩小时一次 drawImage 预览整图
+      if (L.pixels.size === 0 && w * h > IMG_RASTER_THRESHOLD) {
+        // 空图层 + 超大图：进入图片 LOD 原图模式 —— 不栅格化，缩小时一次 drawImage 预览整图
         srcImages.set(L, { img: img, w: w, h: h, ox: ox, oy: oy, base: null, baseHex: null, baseBusy: false, bbox: null, overlay: null, overlayDirty: false });
         markDirtyRect(ox, oy, ox + w - 1, oy + h - 1);
         clearHistory(); // 导入图片不可撤销
         requestRender();
-        alert('已导入 ' + w + '×' + h + ' 图片，放置在屏幕中心（原图模式：缩略与放大编辑均保持流畅，编辑以增量覆盖在图片上）。');
+        alert('已导入 ' + w + '×' + h + ' 图片，放置在屏幕中心（大图原图模式：缩略与放大编辑均保持流畅，编辑以增量覆盖在图片上）。');
         URL.revokeObjectURL(url);
         return;
       }

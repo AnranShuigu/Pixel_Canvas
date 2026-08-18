@@ -1,0 +1,178 @@
+
+
+<div class="top-bar">
+  <a class="brand" href="../../index.html" title="点击回到网页导航">🎚 音频编辑器</a>
+  <div class="sep"></div>
+  <button class="t-btn" id="btnImport" title="导入音频（WAV/MP3/OGG/FLAC 等浏览器可解码格式）">📂 导入音频</button>
+  <button class="t-btn" id="btnImportAux" title="导入第二段音频（用于混音 / 卷积）">📂 第二段</button>
+  <button class="t-btn" id="btnExport" title="导出为 WAV">⬇ 导出 WAV</button>
+  <div class="sep"></div>
+  <button class="t-btn primary" id="btnPlay" title="播放 / 停止">▶ 播放</button>
+  <button class="t-btn" id="btnStop">⏹ 停止</button>
+  <button class="t-btn" id="btnLoop" title="循环播放（🔁 切换开关）">🔁 循环</button>
+  <button class="t-btn danger" id="ae-btnReset" title="撤销到上一步">↩ 撤销</button>
+  <div class="sep"></div>
+  <button class="t-btn" id="btnResetView" title="回到默认状态：重置各面板视图缩放与布局">↺ 复位</button>
+  <button class="t-btn" id="btnToggleTools" title="隐藏 / 显示右侧控制面板">⤒ 面板</button>
+  <div class="sep"></div>
+  <button class="t-btn" id="btnPhys" title="物理建模合成：Karplus-Strong / 数字波导 / 模态合成——不依赖录音，从物理规则重建乐器发声">🔬 物理建模</button>
+  <div class="sep"></div>
+  <span id="info" style="font-size:12px;color:#9aa0ac;white-space:nowrap">未加载音频</span>
+</div>
+<input type="file" id="ae-fileInput" accept="audio/*,.wav,.mp3,.ogg,.flac,.aac,.m4a">
+<input type="file" id="auxFileInput" accept="audio/*,.wav,.mp3,.ogg,.flac,.aac,.m4a">
+
+<!-- 主区：波形 + 频谱 -->
+<div id="mainArea">
+  <div class="pane" id="pane-wave">
+    <div class="pane-head" title="拖动标题可移动（浮动模式）"><span class="ph-title">🌊 波形（主）</span><button data-act="float" title="浮动 / 停靠">🪟</button><button data-act="close" title="隐藏面板">✕</button></div>
+    <div style="position:relative;flex:1;min-height:0">
+      <canvas id="waveCanvas"></canvas>
+      <div class="edit-overlay" id="waveEditOverlay" style="display:none"></div>
+    </div>
+  </div>
+  <div id="hSplitter" title="拖动调整波形 / 频谱大小"></div>
+  <div class="pane" id="pane-spec">
+    <div class="pane-head" title="拖动标题可移动（浮动模式）"><span class="ph-title">📊 频谱（主）</span><button data-act="float" title="浮动 / 停靠">🪟</button><button data-act="close" title="隐藏面板">✕</button></div>
+    <div style="position:relative;flex:1;min-height:0">
+      <canvas id="specCanvas"></canvas>
+      <div class="edit-overlay" id="specEditOverlay" style="display:none"></div>
+    </div>
+  </div>
+</div>
+<div id="vAreaSplitter" title="拖动调整上方（主区）与下方（时间条区域）面板大小，时间条位置随动"></div>
+
+<!-- 右侧控制面板 -->
+<div id="tools">
+  <div id="toolsHead" title="拖动可移动（浮动模式）">
+    <span class="th-title">🎛 控制面板</span>
+    <button id="btnToolsFloat" title="浮动 / 停靠切换">🪟</button>
+    <button id="btnToolsHide" title="隐藏面板">✕</button>
+  </div>
+  <div id="toolsBody">
+    <div class="tl">🧩 面板管理</div>
+    <div id="panelList"></div>
+
+    <div class="tl">🛠 编辑工具（波形/频谱上直接编辑）</div>
+    <div class="row">
+      <button class="a-btn" data-edit-tool="select" style="flex:1">↖ 选择</button>
+      <button class="a-btn" data-edit-tool="brush" style="flex:1">✏ 笔刷</button>
+      <button class="a-btn" data-edit-tool="eraser" style="flex:1">🧽 橡皮</button>
+      <button class="a-btn" data-edit-tool="marquee" style="flex:1">🔲 框选</button>
+    </div>
+    <div class="row"><label>笔刷值</label><input type="range" id="editAmp" min="0.05" max="1" step="0.05" value="0.6"><span class="val" id="editAmpVal">0.60</span></div>
+    <div class="row"><label>增益</label><input type="range" id="editGain" min="0.5" max="3" step="0.1" value="1.5"><span class="val" id="editGainVal">1.5×</span></div>
+    <div class="row">
+      <button class="a-btn" id="btnMarDel">🗑 删除选中</button>
+      <button class="a-btn" id="btnMarFill">🎨 填充选中</button>
+    </div>
+    <div class="row">
+      <button class="a-btn" id="ae-btnUndo" title="撤销 Ctrl+Z">↩ 撤销</button>
+      <button class="a-btn" id="ae-btnRedo" title="重做 Ctrl+Shift+Z" style="opacity:.5">↪ 重做</button>
+    </div>
+    <div class="out" id="editOut"></div>
+
+    <div class="tl">🎛 时域处理</div>
+    <div class="row"><label>音量</label><input type="range" id="volRange" min="0" max="300" value="100"><span class="val" id="volVal">100%</span><button class="a-btn" id="btnVol">应用</button></div>
+    <div class="row"><label>淡入/淡出</label><input type="range" id="fadeRange" min="0" max="5000" value="1000" step="100"><span class="val" id="fadeVal">1.0s</span><button class="a-btn" id="btnFade">应用</button></div>
+    <div class="row"><label>变速(变调)</label><input type="range" id="speedRange" min="20" max="300" value="100"><span class="val" id="speedVal">1.00x</span><button class="a-btn" id="btnSpeed">应用</button></div>
+    <div class="row"><label>采样率</label><select id="sampleRateSel" class="a-btn">
+      <option value="8000">8000</option><option value="11025">11025</option><option value="16000">16000</option>
+      <option value="22050">22050</option><option value="32000">32000</option><option value="44100" selected>44100</option>
+      <option value="48000">48000</option><option value="96000">96000</option>
+    </select><button class="a-btn primary" id="btnResample" title="按新采样率重采样：采样率越高采样点越多">应用</button></div>
+    <div class="row"><button class="a-btn" id="btnReverse">↔ 反转（倒放）</button><button class="a-btn" id="btnNormalize">⚖ 归一化</button><button class="a-btn" id="btnMix">⊕ 混入第二段</button></div>
+
+    <div class="tl">📊 傅里叶分析（FFT）</div>
+    <div class="row"><label>窗口大小</label><select id="fftSize" class="a-btn">
+      <option value="1024">1024</option><option value="2048" selected>2048</option>
+      <option value="4096">4096</option><option value="8192">8192</option>
+    </select><button class="a-btn primary" id="btnFFT">频谱分析</button></div>
+    <div class="row"><label>基频检测</label><button class="a-btn" id="btnPitch">自相关测基频</button></div>
+    <div class="out" id="fftOut"></div>
+
+    <div class="tl">🎛 频域滤波（FFT 频域乘法）</div>
+    <div class="row"><label>低通 Hz</label><input type="number" id="lpFreq" value="3000"><button class="a-btn" id="btnLP">低通</button></div>
+    <div class="row"><label>高通 Hz</label><input type="number" id="hpFreq" value="200"><button class="a-btn" id="btnHP">高通</button></div>
+    <div class="row"><label>带通</label><input type="number" id="bpLo" value="300" style="width:56px"><input type="number" id="bpHi" value="3000" style="width:56px"><button class="a-btn" id="btnBP">带通</button></div>
+
+    <div class="tl">🔁 卷积（时域卷积 = 频域乘积）</div>
+    <div class="row"><label>脉冲响应</label><button class="a-btn" id="btnIR1">🔊 简单混响</button><button class="a-btn" id="btnIR2">⚡ 短促回声</button></div>
+    <div class="row"><button class="a-btn primary" id="btnConv">⊛ 卷积（用第二段）</button></div>
+
+    <div class="tl">📈 概率统计</div>
+    <div class="row"><label>噪声门</label><input type="range" id="gateRange" min="0" max="200" value="10"><span class="val" id="gateVal">10%</span><button class="a-btn" id="btnGate">应用</button></div>
+    <div class="row"><button class="a-btn" id="btnDenoise">🌫 频谱减法降噪（高斯噪声估计）</button></div>
+    <div class="out" id="statOut"></div>
+
+    <div class="tl">🧩 矩阵分解（NMF 源分离）</div>
+    <div class="row"><label>成分数</label><select id="nmfK" class="a-btn"><option value="2" selected>2</option><option value="3">3</option></select>
+    <button class="a-btn primary" id="btnNMF">分解并分离</button></div>
+    <div class="out" id="nmfOut"></div>
+  </div>
+</div>
+<div id="vSplitter" title="拖动调整面板宽度"></div>
+<button id="btnToolsShow" style="display:none" title="显示控制面板">🛠 显示工具栏</button>
+
+<!-- 底部：进度条 + 分析区（波形 / 频谱 / 时频图） -->
+<div id="bottomArea">
+  <div id="progressWrap">
+    <span class="pt" id="timeCur">0:00.0</span>
+    <input type="range" id="progressBar" min="0" max="1000" value="0">
+    <span class="pt" id="timeTot">0:00.0</span>
+  </div>
+  <div id="analyzeWrap">
+    <div class="pane" id="pane-mWave">
+      <div class="pane-head" title="拖动标题可移动（浮动模式）"><span class="ph-title" id="mWaveTitle">🌊 波形（当前时间）</span><button data-act="float" title="浮动 / 停靠">🪟</button><button data-act="close" title="隐藏面板">✕</button></div>
+      <canvas id="miniWave"></canvas>
+    </div>
+    <div class="ana-splitter" id="anaSplit1" title="拖动调整面板大小"></div>
+    <div class="pane" id="pane-mSpec">
+      <div class="pane-head" title="拖动标题可移动（浮动模式）"><span class="ph-title">📊 频谱（当前帧 FFT）</span><button data-act="float" title="浮动 / 停靠">🪟</button><button data-act="close" title="隐藏面板">✕</button></div>
+      <canvas id="miniSpec"></canvas>
+    </div>
+    <div class="ana-splitter" id="anaSplit2" title="拖动调整面板大小"></div>
+    <div class="pane" id="pane-mSTFT">
+      <div class="pane-head" title="拖动标题可移动（浮动模式）"><span class="ph-title">🎨 时频图（STFT · 黄线=当前时间）</span><button data-act="float" title="浮动 / 停靠">🪟</button><button data-act="close" title="隐藏面板">✕</button></div>
+      <canvas id="miniSTFT"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- 物理建模合成面板 -->
+<div id="physOverlay" style="display:none">
+  <div id="physPanel">
+    <h2>🔬 物理建模合成 <span class="close" id="physClose" title="关闭">✕</span></h2>
+    <div class="desc">不依赖任何录音，用数学公式重建乐器的物理发声过程：<b>激励器</b>（琴槌/弓/手指的激发）+ <b>共鸣器</b>（琴弦/鼓膜/琴身的振动传播）。实现：<b>Karplus-Strong 数字波导</b>（拨弦/击弦/拉弦）、<b>模态合成</b>（鼓/铃/金属）、<b>共振峰+模态</b>（人声/吹奏）。</div>
+    <div class="tl">🎼 乐器（合成算法）</div>
+    <div class="row">
+      <label>类型</label>
+      <select id="physType">
+        <option value="pluck">🎸 吉他拨弦（Karplus-Strong）</option>
+        <option value="piano">🎹 钢琴击弦（多弦 + 音板共鸣）</option>
+        <option value="bow">🎻 小提琴拉弦（持续弓激励）</option>
+        <option value="drum">🥁 鼓（圆膜模态合成）</option>
+        <option value="bell">🔔 铃/金属（非谐模态）</option>
+        <option value="voice">🗣 人声/吹奏（共振峰 + 模态）</option>
+      </select>
+    </div>
+    <div class="tl">🎛 物理参数（激励器 + 共鸣器）</div>
+    <div class="row"><label>频率 Hz</label><input type="range" id="physFreq" min="40" max="1200" value="220"><span class="val" id="physFreqVal">220</span><span id="physNote"></span></div>
+    <div class="row"><label>时长 s</label><input type="range" id="physDur" min="0.5" max="8" step="0.1" value="2"><span class="val" id="physDurVal">2.0s</span></div>
+    <div class="row"><label>激励强度</label><input type="range" id="physStr" min="0.1" max="2" step="0.05" value="1"><span class="val" id="physStrVal">1.00</span></div>
+    <div class="row" id="rowDamp"><label>阻尼/衰减</label><input type="range" id="physDamp" min="0.90" max="0.999" step="0.001" value="0.985"><span class="val" id="physDampVal">0.985</span></div>
+    <div class="row" id="rowModes"><label>模态数</label><input type="range" id="physModes" min="2" max="12" step="1" value="5"><span class="val" id="physModesVal">5</span></div>
+    <div class="row" id="rowBows"><label>弓压/弓速</label><input type="range" id="physBow" min="0.1" max="2" step="0.05" value="0.8"><span class="val" id="physBowVal">0.80</span></div>
+    <div class="row" id="rowDetune"><label>失谐 cents</label><input type="range" id="physDetune" min="0" max="50" step="1" value="8"><span class="val" id="physDetuneVal">8¢</span></div>
+    <div class="tl">📉 结果预览</div>
+    <canvas id="physCanvas"></canvas>
+    <div class="btns">
+      <button id="physGen">🎲 随机参数</button>
+      <button id="physPlay">▶ 生成并试听</button>
+      <button class="primary" id="physLoad">⬇ 载入音频编辑器</button>
+      <button id="physExport">💾 导出 WAV</button>
+    </div>
+  </div>
+</div>
+
+<script src="音频编辑器.js"></script>

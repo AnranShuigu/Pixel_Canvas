@@ -530,6 +530,7 @@
       if (!L.visible) continue;
       if (L.pixels.size > 0) return true;
       if (srcImages.has(L)) return true; // 图片 LOD 原图模式也算有内容
+      if (L.shapes && L.shapes.length > 0) return true; // 矢量形状也算内容
     }
     return false;
   }
