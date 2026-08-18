@@ -1137,6 +1137,26 @@ function vsFlash(msg) {
   document.body.appendChild(d);
   setTimeout(function () { d.remove(); }, 2000);
 }
+// 线宽设置（两处面板共用入口）：更新 VS.sw；若有选中的矢量形状则即时同步其线宽（可撤销）
+let vsSwApplyHist = false; // 本次滑块拖动是否已入撤销栈（避免连续 input 刷爆历史）
+function vsSetSw(v) {
+  VS.sw = v;
+  vsSyncSettingsUI();
+  vsApplySwToSelected();
+}
+function vsApplySwToSelected() {
+  if (!VS.selected.size) return;
+  const L = vsActiveLayer();
+  if (!L || !L.shapes || !L.shapes.length) return;
+  let changed = false;
+  for (const sh of L.shapes) {
+    if (VS.selected.has(sh.id) && sh.sw !== VS.sw) { sh.sw = VS.sw; changed = true; }
+  }
+  if (changed) {
+    if (!vsSwApplyHist) { vsPushHistory(); vsSwApplyHist = true; }
+    requestRender();
+  }
+}
 // 构建一组矢量设置控件（可挂到任意容器，值由 vsSyncSettingsUI 统一刷新）
 function vsBuildSettingsControls(root) {
   const mk = function (label, ctrl) {
@@ -1145,9 +1165,10 @@ function vsBuildSettingsControls(root) {
     row.appendChild(ctrl);
     return row;
   };
-  // 线宽
-  const lwIn = vsEl('input', { type: 'range', min: '1', max: '16', step: '1', 'data-vs-ctrl': 'sw', style: 'width:80px' });
-  lwIn.addEventListener('input', function () { VS.sw = +this.value; vsSyncSettingsUI(); });
+  // 线宽（选中形状时拖动即时生效；未选中时仅影响新绘制）
+  const lwIn = vsEl('input', { type: 'range', min: '1', max: '16', step: '1', 'data-vs-ctrl': 'sw', style: 'width:80px', title: '线宽（屏幕像素，缩放时粗细不变）：已选中形状时拖动即时生效；未选中时仅影响之后绘制的形状' });
+  lwIn.addEventListener('input', function () { vsSetSw(+this.value); });
+  lwIn.addEventListener('change', function () { vsSwApplyHist = false; });
   root.appendChild(mk('线宽', lwIn));
   root.appendChild(vsEl('span', { 'data-vs-ctrl': 'swVal', style: 'color:#7a8494;margin:-4px 0 4px 30px' }, ''));
   // 描边
